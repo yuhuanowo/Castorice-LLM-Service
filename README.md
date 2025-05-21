@@ -1,4 +1,4 @@
-# AI Agent API 服务器
+# Castorice-LLM-Service AI Agent API 服务器
 
 这是一个基于 FastAPI 开发的 AI Agent API 服务器，提供统一的 AI 模型调用接口，支持多种功能，包括聊天完成、长期记忆管理、工具调用等。
 

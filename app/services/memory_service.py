@@ -211,6 +211,15 @@ class MemoryService:
                 # 提取生成的記憶
                 memory_update = result["choices"][0]["message"]["content"]
                 
+                # 確保整個多行文本都被正確保存
+                # 檢查返回的內容是否是有效字符串
+                if not isinstance(memory_update, str):
+                    logger.error(f"記憶更新返回的內容不是字符串: {type(memory_update)}")
+                    return memory_text
+                
+                # 記錄一下收到的完整記憶內容
+                logger.info(f"處理記憶更新: 長度={len(memory_update)}, 前50個字符={memory_update[:50]}")
+                
                 # 更新MongoDB中的記憶
                 update_user_memory(user_id, memory_update)
                 

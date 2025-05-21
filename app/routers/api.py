@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Dict, Any, Optional
 import uuid
 from datetime import datetime
+import logging
+logger = logging.getLogger(__name__)
 
 from app.models.mongodb import create_chat_log, get_chat_logs, get_user_usage
 from app.models.sqlite import create_chat_log_sqlite
@@ -118,10 +120,11 @@ async def chat_completion(
     )
     
     # 异步更新用户长期记忆
-    memory_update_task = memory_service.update_memory(
+    await memory_service.update_memory(
         request.user_id,
         request.messages[-1].content if request.messages else ""
     )
+    logger.info("记忆更新任务已完成")
     
     # 返回完整响应
     return {

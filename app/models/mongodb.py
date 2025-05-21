@@ -41,6 +41,14 @@ def get_chat_by_interaction_id(interaction_id: str, user_id: str):
 
 def update_user_memory(user_id: str, memory: str):
     """更新或创建用户记忆"""
+    # 确保 memory 是字符串类型
+    if not isinstance(memory, str):
+        memory = str(memory)
+    
+    # 记录内存更新长度
+    from app.utils.logger import logger
+    logger.info(f"更新用户记忆: user_id={user_id}, memory_length={len(memory)}")
+    
     memory_collection.update_one(
         {"user_id": user_id},
         {"$set": {"memory": memory, "last_update": datetime.now()}},

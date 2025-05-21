@@ -4,6 +4,7 @@ import base64
 from datetime import datetime
 import json
 import os
+import logging
 
 from app.utils.logger import logger
 from app.core.config import get_settings
@@ -36,6 +37,7 @@ class LLMService:
             with open(self.usage_path, "w") as f:
                 json.dump({"date": datetime.now().strftime("%Y-%m-%d")}, f)
 
+    ## MARK: 处理用户使用量统计
     async def update_user_usage(self, user_id: str, model_name: str) -> Dict[str, Any]:
         """
         更新用户使用量统计 - 在每次调用模型后更新各种统计源
@@ -96,6 +98,7 @@ class LLMService:
                 "isExceeded": False
             }
 
+    # MARK: 处理系统提示和工具定义
     def get_system_prompt(self, model_name: str, language: str = "zh-CN") -> Dict[str, str]:
         """
         获取系统提示 - 根据模型和语言选择合适的系统提示
@@ -129,7 +132,7 @@ class LLMService:
             "role": role,
             "content": base_prompt
         }
-
+    # MARK: 处理工具定义
     def get_tool_definitions(self, enable_search: bool = False) -> List[Dict[str, Any]]:
         """
         获取工具定义 - 提供可用于模型的外部工具定义
@@ -190,6 +193,7 @@ class LLMService:
             
         return tools
 
+    # MARK: 处理用户消息格式化
     async def format_user_message(
         self, 
         prompt: str, 
@@ -256,6 +260,7 @@ class LLMService:
                 
         return user_message
 
+    # MARK: 发送LLM请求
     async def send_llm_request(
         self,
         messages: List[Dict[str, Any]],
@@ -296,7 +301,7 @@ class LLMService:
                     url,
                     headers=headers,
                     json=body,
-                    timeout=60.0  # 增加超时时间，确保大型输入有足够处理时间
+                    timeout=300.0  # 增加超时时间，确保大型输入有足够处理时间
                 )
                 
                 # 处理错误响应
@@ -310,6 +315,7 @@ class LLMService:
             logger.error(f"LLM请求错误: {str(e)}")
             return {"error": "请求错误", "detail": str(e)}
 
+    # MARK: 处理工具调用
     async def handle_tool_call(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         处理工具调用 - 执行模型请求的工具函数并返回结果
