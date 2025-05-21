@@ -107,7 +107,7 @@ payload = {
 response = requests.post(url, headers=headers, json=payload)
 print(json.dumps(response.json(), indent=2, ensure_ascii=False))
 ```
-
+<!-- 
 ## 将API升级为AI Agent的实施指南
 
 当前系统已经实现了API层面的功能，接下来可以升级为全功能AI Agent。以下是实施路线图：
@@ -597,4 +597,4 @@ AI Agent代表了人工智能应用的重要发展方向，将大型语言模型
 - [ReAct论文](https://arxiv.org/abs/2210.03629) - 关于思考-行动-观察框架
 - [LangChain文档](https://python.langchain.com/docs/get_started/introduction) - 另一个流行的Agent框架
 - [FastAPI文档](https://fastapi.tiangolo.com/) - 后端框架官方文档
-- [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) - 云数据库服务，适合存储Agent数据
+- [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) - 云数据库服务，适合存储Agent数据 -->
