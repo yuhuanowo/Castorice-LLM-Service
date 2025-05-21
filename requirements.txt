@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+httpx
+pymongo
+motor
+pydantic
+pydantic-settings
+python-multipart
+aiohttp
+requests
+beautifulsoup4
+python-dotenv
+ujson
+starlette
+jinja2
+azure-ai-inference
