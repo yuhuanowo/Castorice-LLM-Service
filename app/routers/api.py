@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 import uuid
 from datetime import datetime
 import logging
+import asyncio
 logger = logging.getLogger(__name__)
 
 from app.models.mongodb import create_chat_log, get_chat_logs, get_user_usage
@@ -16,6 +17,13 @@ import models as schemas
 # 创建API路由
 router = APIRouter()
 
+# 记忆更新的后台任务函数
+async def background_memory_update(user_id: str, prompt: str):
+    try:
+        await memory_service.update_memory(user_id, prompt)
+        logger.info(f"后台记忆更新任务已完成，用户ID: {user_id}")
+    except Exception as e:
+        logger.error(f"后台记忆更新任务失败，用户ID: {user_id}, 错误: {str(e)}")
 
 @router.post("/chat/completions", response_model=schemas.ChatCompletionResponse)
 async def chat_completion(
@@ -119,12 +127,10 @@ async def chat_completion(
         interaction_id
     )
     
-    # 异步更新用户长期记忆
-    await memory_service.update_memory(
-        request.user_id,
-        request.messages[-1].content if request.messages else ""
-    )
-    logger.info("记忆更新任务已完成")
+    # 在后台异步更新用户长期记忆
+    prompt = request.messages[-1].content if request.messages else ""
+    asyncio.create_task(background_memory_update(request.user_id, prompt))
+    logger.info(f"记忆更新任务已在后台启动，用户ID: {request.user_id}")
     
     # 返回完整响应
     return {

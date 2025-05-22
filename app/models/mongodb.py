@@ -5,6 +5,7 @@ from app.core.config import get_settings
 settings = get_settings()
 client = MongoClient(settings.MONGODB_URL)
 db = client.get_default_database()
+from app.utils.logger import logger
 
 # 聊天记录集合
 chat_log_collection = db["chat_logs"]
@@ -45,8 +46,8 @@ def update_user_memory(user_id: str, memory: str):
     if not isinstance(memory, str):
         memory = str(memory)
     
+    # logger.info(memory)
     # 记录内存更新长度
-    from app.utils.logger import logger
     logger.info(f"更新用户记忆: user_id={user_id}, memory_length={len(memory)}")
     
     memory_collection.update_one(

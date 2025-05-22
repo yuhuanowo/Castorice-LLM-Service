@@ -22,6 +22,7 @@ class MemoryService:
         self.api_key = settings.AZURE_INFERENCE_KEY
         self.api_version = settings.AZURE_API_VERSION
         self.memory_model = "Meta-Llama-3.1-8B-Instruct"  # 用於記憶處理的模型
+        
     async def update_memory(self, user_id: str, prompt: str) -> str:
         """
         更新用戶長期記憶
@@ -34,6 +35,9 @@ class MemoryService:
             更新後的記憶
         """
         try:
+            # 標記記憶更新開始
+            logger.info(f"開始記憶更新過程，使用者ID: {user_id}")
+            
             # 獲取最近對話記錄
             recent_logs = get_chat_logs(user_id, 5)
             conversations = []
@@ -188,42 +192,56 @@ class MemoryService:
                         "content": llamaprompt 
                     }
                 ],
-                "model": self.memory_model
+                "model": self.memory_model,
+                "max_tokens": 4096,  # 增加最大生成标记数
+                "temperature": 0.3    # 设置适当的温度
             }
             
+            logger.info(f"發送記憶更新請求，使用者ID: {user_id}")
+            
             async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=body,
-                    timeout=60.0
-                )
-                
-                if response.status_code != 200:
-                    logger.error(f"記憶更新API錯誤 {response.status_code}: {response.text}")
+                try:
+                    response = await client.post(
+                        url,
+                        headers=headers,
+                        json=body,
+                        timeout=300.0  # 增加超時時間到300秒
+                    )
+                    
+                    if response.status_code != 200:
+                        logger.error(f"記憶更新API錯誤 {response.status_code}: {response.text}")
+                        return memory_text
+                    
+                    result = response.json()
+                    if not result or "choices" not in result or not result["choices"]:
+                        logger.error("記憶更新回應格式無效")
+                        logger.error(f"API返回的完整结果: {json.dumps(result, ensure_ascii=False)}")
+                        return memory_text
+                    
+                    # 提取生成的記憶
+                    memory_update = result["choices"][0]["message"]["content"]
+                    
+                    # 记录返回的内容长度和部分内容
+                    logger.info(f"记憶更新內容長度: {len(memory_update)} 字符")
+                    logger.info(f"记憶更新前10字符: {memory_update[:10]}...")
+                    
+                    # 检查返回内容是否过短
+                    if len(memory_update) < 50:
+                        logger.warning(f"警告: 记憶更新內容過短({len(memory_update)}字符): {memory_update}")
+                        # 尝试获取完整的响应信息
+                        logger.warning(f"完整响应: {json.dumps(result, ensure_ascii=False)}")
+                    
+                    # 更新MongoDB中的記憶
+                    update_user_memory(user_id, memory_update)
+                    logger.info(f"記憶更新完成，使用者ID: {user_id}")
+                    
+                    return memory_update
+                except httpx.ReadTimeout:
+                    logger.error(f"記憶更新請求超時，使用者ID: {user_id}")
                     return memory_text
-                
-                result = response.json()
-                if not result or "choices" not in result or not result["choices"]:
-                    logger.error("記憶更新回應格式無效")
+                except Exception as e:
+                    logger.error(f"記憶更新API請求錯誤: {str(e)}")
                     return memory_text
-                
-                # 提取生成的記憶
-                memory_update = result["choices"][0]["message"]["content"]
-                
-                # 確保整個多行文本都被正確保存
-                # 檢查返回的內容是否是有效字符串
-                if not isinstance(memory_update, str):
-                    logger.error(f"記憶更新返回的內容不是字符串: {type(memory_update)}")
-                    return memory_text
-                
-                # 記錄一下收到的完整記憶內容
-                logger.info(f"處理記憶更新: 長度={len(memory_update)}, 前50個字符={memory_update[:50]}")
-                
-                # 更新MongoDB中的記憶
-                update_user_memory(user_id, memory_update)
-                
-                return memory_update
         except Exception as e:
             logger.error(f"記憶更新錯誤: {str(e)}")
             return memory_text
