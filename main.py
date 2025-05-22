@@ -5,6 +5,8 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
+from starlette.exceptions import HTTPException as StarletteHTTPException
+import traceback
 
 from app.core.config import get_settings
 from app.models.sqlite import init_sqlite
@@ -75,10 +77,24 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     )
 
 
+@app.exception_handler(StarletteHTTPException)
+async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """处理Starlette HTTP异常"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail},
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """处理所有其他异常"""
-    logger.error(f"全局异常: {str(exc)}")
+    # 记录异常详细信息
+    error_details = traceback.format_exc()
+    logger.error(f"全局异常: {repr(exc)}")
+    logger.debug(error_details)
+    
+    # 返回友好的错误信息
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"error": "服务器内部错误", "detail": str(exc)},

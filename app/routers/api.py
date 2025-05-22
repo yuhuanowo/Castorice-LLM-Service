@@ -5,6 +5,7 @@ from datetime import datetime
 import logging
 import asyncio
 import json
+from bson import ObjectId
 logger = logging.getLogger(__name__)
 
 from app.models.mongodb import create_chat_log, get_chat_logs, get_user_usage
@@ -17,6 +18,21 @@ import models as schemas
 
 # 创建API路由
 router = APIRouter()
+
+# 辅助函数：确保MongoDB对象可以被JSON序列化
+def json_serialize_mongodb(obj):
+    """
+    处理MongoDB对象的JSON序列化，将ObjectId转换为字符串
+    """
+    if isinstance(obj, ObjectId):
+        return str(obj)
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: json_serialize_mongodb(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [json_serialize_mongodb(i) for i in obj]
+    return obj
 
 # 记忆更新的后台任务函数
 async def background_memory_update(user_id: str, prompt: str):
@@ -271,5 +287,8 @@ async def get_chat_history(
     
     返回用户最近的对话记录，可通过limit参数限制返回数量
     """
+    # 获取聊天历史并确保可序列化
     history = get_chat_logs(user_id, limit)
-    return {"history": history}
+    # 使用辅助函数确保所有数据可以被正确序列化
+    serialized_history = json_serialize_mongodb(history)
+    return {"history": serialized_history}
