@@ -13,10 +13,14 @@ class Settings(BaseSettings):
     MONGODB_URL: str = os.getenv("MONGODB_URL", "mongodb://localhost:27017/agent")
     SQLITE_DB: str = os.getenv("SQLITE_DB", "./chatlog.db")
 
-    # LLM API密钥
+    # GitHub Model API密钥
     GITHUB_INFERENCE_KEY: str = os.getenv("GITHUB_INFERENCE_KEY", "")
     GITHUB_ENDPOINT: str = os.getenv("GITHUB_ENDPOINT", "https://models.inference.ai.azure.com")
     GITHUB_API_VERSION: str = os.getenv("GITHUB_API_VERSION", "2025-04-01-preview")
+    
+    # Gemini API密钥和配置
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_DEFAULT_MODEL: str = os.getenv("GEMINI_DEFAULT_MODEL", "gemini-2.0-flash")
     
     # GitHub Token (用于 GitHub 的模型调用)
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
@@ -49,6 +53,18 @@ class Settings(BaseSettings):
     
     ]
     
+    # Gemini模型列表
+    ALLOWED_GEMINI_MODELS: list = [
+        "gemini-2.5-flash-preview-05-20",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
+        "gemma-3-27b-it",
+        "gemma-3n-e4b-it",
+        
+    ]
+    
     # 模型使用限制
 
     # 不支持工具功能的模型列表
@@ -67,7 +83,7 @@ class Settings(BaseSettings):
     Embedding: int = 150 * USER_LIMIT_MULTIPLIER
     
     # 使用者限制量
-    GITHUB_MODEL_USAGE_LIMITS: dict = {
+    MODEL_USAGE_LIMITS: dict = {
         # OpenAI
         "gpt-4o": High,
         "gpt-4o-mini": Low,
@@ -123,7 +139,17 @@ class Settings(BaseSettings):
         "Phi-3.5-vision-instruct": Low,
         "Phi-4": Low,
         "Phi-4-multimodal-instruct": Low,
-        "Phi-4-reasoning": Low
+        "Phi-4-reasoning": Low,
+
+        # Gemini
+        "gemini-2.5-flash-preview-05-20": 250,
+        "gemini-2.0-flash": 750,
+        "gemini-2.0-flash-lite": 750,
+        "gemini-1.5-pro": 25,
+        "gemini-1.5-flash": 750,
+        "gemma-3-27b-it": 7200,
+        "gemma-3n-e4b-it": 7200,
+    
     }
     
     # 默认语言

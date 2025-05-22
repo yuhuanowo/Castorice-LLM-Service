@@ -14,3 +14,4 @@ ujson
 starlette
 jinja2
 azure-ai-inference
+google-genai

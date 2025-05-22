@@ -5,6 +5,16 @@ from datetime import datetime
 import json
 import os
 import logging
+import asyncio
+from enum import Enum
+
+# 添加Gemini需要的依赖
+try:
+    from google import genai
+    from google.genai import types
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
 
 from app.utils.logger import logger
 from app.core.config import get_settings
@@ -15,16 +25,36 @@ from app.models.sqlite import update_usage_sqlite
 settings = get_settings()
 
 
+class ModelProvider(Enum):
+    """模型提供商枚举类"""
+    GITHUB = "github"
+    GEMINI = "gemini"
+
+
 class LLMService:
     """
     LLM服务类 - 负责处理与大型语言模型API的交互
     包括：发送请求、处理响应、工具调用和使用量统计
     """
     def __init__(self):
-        # API基础设置
-        self.endpoint = settings.GITHUB_ENDPOINT
-        self.api_key = settings.GITHUB_INFERENCE_KEY
-        self.api_version = settings.GITHUB_API_VERSION
+        # GitHub API设置
+        self.github_endpoint = settings.GITHUB_ENDPOINT
+        self.github_api_key = settings.GITHUB_INFERENCE_KEY
+        self.github_api_version = settings.GITHUB_API_VERSION
+          # Gemini API设置
+        if GEMINI_AVAILABLE:
+            self.gemini_api_key = settings.GEMINI_API_KEY
+            self.gemini_default_model = settings.GEMINI_DEFAULT_MODEL
+            # 初始化Gemini客户端
+            if self.gemini_api_key:
+                self.gemini_client = genai.Client(api_key=self.gemini_api_key)
+            else:
+                self.gemini_client = None
+                logger.warning("Gemini API密钥未设置，无法使用Gemini模型")
+        else:
+            self.gemini_client = None
+            logger.warning("未安装google-genai库，无法使用Gemini模型")
+        
         # 存储最近生成的图片
         self.last_generated_image = None
         
@@ -82,21 +112,23 @@ class LLMService:
             
             # 保存到文件
             with open(self.usage_path, "w") as f:
-                json.dump(user_usage, f, indent=2)
-                
+                json.dump(user_usage, f, indent=2)            
+            usage_count = user_usage[user_id].get(model_name, 0)
+            limit = settings.MODEL_USAGE_LIMITS.get(model_name, 0)
+            
             return {
                 "selectedModel": model_name,
-                "usage": user_usage[user_id].get(model_name, 0),
-                "limit": settings.GITHUB_MODEL_USAGE_LIMITS.get(model_name, 0),
-                "isExceeded": user_usage[user_id].get(model_name, 0) > settings.GITHUB_MODEL_USAGE_LIMITS.get(model_name, 0)
+                "usage": usage_count,
+                "limit": limit,
+                "isExceeded": usage_count > limit
             }
         except Exception as e:
-            logger.error(f"更新使用量错误: {str(e)}")
-            # 失败时返回基本信息
+            logger.error(f"更新使用量错误: {str(e)}")            # 失败时返回基本信息
+            limit = settings.MODEL_USAGE_LIMITS.get(model_name, 0)
             return {
                 "selectedModel": model_name,
                 "usage": 0,
-                "limit": settings.GITHUB_MODEL_USAGE_LIMITS.get(model_name, 0),
+                "limit": limit,
                 "isExceeded": False
             }
 
@@ -195,6 +227,22 @@ class LLMService:
             
         return tools
 
+    # MARK: Model Provider 選擇
+    def _get_model_provider(self, model_name: str) -> ModelProvider:
+        """
+        确定模型的提供商类型
+        
+        Args:
+            model_name: 模型名称
+            
+        Returns:
+            模型提供商枚举值
+        """
+        if model_name in settings.ALLOWED_GEMINI_MODELS:
+            return ModelProvider.GEMINI
+        else:  # 默认为GitHub模型
+            return ModelProvider.GITHUB
+
     # MARK: 处理用户消息格式化
     async def format_user_message(
         self, 
@@ -280,9 +328,35 @@ class LLMService:
         Returns:
             API响应结果
         """
-        url = f"{self.endpoint}/chat/completions"
+        # 确定模型提供商
+        provider = self._get_model_provider(model_name)
+        
+        # 根据提供商调用相应的请求方法
+        if provider == ModelProvider.GEMINI:
+            return await self._send_gemini_request(messages, model_name, tools)
+        else:  # 默认使用GitHub模型
+            return await self._send_github_request(messages, model_name, tools)
+            
+    async def _send_github_request(
+        self,
+        messages: List[Dict[str, Any]],
+        model_name: str,
+        tools: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """
+        发送GitHub模型请求
+        
+        Args:
+            messages: 消息列表
+            model_name: 模型名称
+            tools: 可选的工具定义
+            
+        Returns:
+            API响应结果
+        """
+        url = f"{self.github_endpoint}/chat/completions"
         headers = {
-            "api-key": self.api_key,
+            "api-key": self.github_api_key,
             "Content-Type": "application/json"
         }
         
@@ -308,14 +382,251 @@ class LLMService:
                 
                 # 处理错误响应
                 if response.status_code != 200:
-                    logger.error(f"LLM API错误 {response.status_code}: {response.text}")
+                    logger.error(f"GitHub LLM API错误 {response.status_code}: {response.text}")
                     return {"error": f"API错误 {response.status_code}", "detail": response.text}
                 
                 # 返回成功响应
                 return response.json()
         except Exception as e:
-            logger.error(f"LLM请求错误: {str(e)}")
+            logger.error(f"GitHub LLM请求错误: {str(e)}")
             return {"error": "请求错误", "detail": str(e)}
+    async def _send_gemini_request(
+        self,
+        messages: List[Dict[str, Any]],
+        model_name: str,
+        tools: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """
+        发送Gemini模型请求
+        
+        Args:
+            messages: 消息列表
+            model_name: 模型名称
+            tools: 可选的工具定义
+            
+        Returns:
+            格式化后的API响应结果，使其与GitHub模型响应格式一致
+        """
+        if not GEMINI_AVAILABLE or not self.gemini_client:
+            return {"error": "Gemini不可用，请安装google-genai库并设置API密钥"}
+        
+        try:
+            # 转换消息格式为Gemini格式
+            gemini_messages = []
+            for msg in messages:
+                role = msg.get("role", "").lower()
+                content = msg.get("content", "")
+                
+                # 构建Gemini消息
+                if isinstance(content, str):
+                    parts = [types.Part.from_text(text=content)]
+                elif isinstance(content, list):
+                    parts = []
+                    for item in content:
+                        if item.get("type") == "text":
+                            parts.append(types.Part.from_text(text=item.get("text", "")))
+                        elif item.get("type") == "image_url":
+                            image_url = item.get("image_url", {}).get("url", "")
+                            if image_url.startswith("data:image"):
+                                # 处理base64图片
+                                image_base64 = image_url.split(",")[1]
+                                parts.append(types.Part.from_data(data=base64.b64decode(image_base64)))
+                
+                # 映射角色
+                gemini_role = "user"
+                if role == "system":
+                    gemini_role = "user"  # Gemini没有system角色，用user替代
+                elif role == "assistant":
+                    gemini_role = "model"
+                
+                gemini_messages.append(types.Content(role=gemini_role, parts=parts))
+            
+            # 配置生成参数和工具定义（如果提供）
+            gemini_tools = None
+            if tools:
+                # 将OpenAI/GitHub格式的工具转换为Gemini格式
+                function_declarations = []
+                for tool in tools:
+                    if tool.get("type") == "function":
+                        function_info = tool.get("function", {})
+                        # 创建符合Gemini格式的函数声明
+                        declaration = {
+                            "name": function_info.get("name", ""),
+                            "description": function_info.get("description", ""),
+                            "parameters": function_info.get("parameters", {})
+                        }
+                        function_declarations.append(declaration)
+                        logger.info(f"转换工具为Gemini格式: {declaration['name']}")
+                
+                if function_declarations:
+                    try:
+                        # 创建Gemini工具定义
+                        gemini_tools = types.Tool(function_declarations=function_declarations)
+                        logger.info(f"成功创建Gemini工具定义，函数数量: {len(function_declarations)}")
+                    except Exception as e:
+                        logger.error(f"创建Gemini工具定义失败: {str(e)}")
+            
+            # 配置生成参数
+            generate_config = types.GenerateContentConfig(
+                response_mime_type="text/plain",
+            )
+            
+            # 如果有工具定义，添加到配置中
+            if gemini_tools:
+                generate_config.tools = [gemini_tools]
+            
+            # 发送请求并处理响应
+            function_call = None
+            response_text = ""
+            
+            try:
+                # 获取完整响应
+                response = await self._collect_gemini_stream(model_name, gemini_messages, generate_config)
+                
+                # 如果是字符串，说明已经提取了文本响应
+                if isinstance(response, str):
+                    response_text = response
+                else:
+                    # 处理完整响应对象 - 可能包含函数调用
+                    if hasattr(response, 'candidates') and response.candidates:
+                        for candidate in response.candidates:
+                            if hasattr(candidate, 'content') and candidate.content:
+                                for part in candidate.content.parts:
+                                    # 处理函数调用
+                                    if hasattr(part, 'function_call') and part.function_call:
+                                        function_call = {
+                                            "name": part.function_call.name,
+                                            "arguments": part.function_call.args
+                                        }
+                                        logger.info(f"Gemini返回工具调用: {function_call['name']}")
+                                    # 处理文本部分（如果有）
+                                    elif hasattr(part, 'text') and part.text:
+                                        if response_text:
+                                            response_text += " " + part.text
+                                        else:
+                                            response_text = part.text
+            
+            except Exception as e:
+                logger.error(f"Gemini请求错误: {str(e)}")
+                return {"error": "Gemini请求失败", "detail": str(e)}
+            
+            # 构建与GitHub模型响应格式一致的响应
+            choices = [{
+                "message": {
+                    "role": "assistant",
+                    "content": response_text if response_text else None  # 如果没有文本内容则设为None
+                },
+                "finish_reason": "stop"
+            }]
+            
+            # 如果有工具调用，添加到响应中
+            if function_call:
+                if not choices[0]["message"]["content"]:
+                    # 如果没有文本内容，将content设置为空字符串而不是None
+                    choices[0]["message"]["content"] = ""
+                    
+                choices[0]["message"]["tool_calls"] = [{
+                    "id": f"call_{datetime.now().timestamp()}",
+                    "type": "function",
+                    "function": {
+                        "name": function_call["name"],
+                        "arguments": json.dumps(function_call["arguments"])
+                    }
+                }]
+            
+            return {
+                "choices": choices,
+                "model": model_name,
+                "id": f"gemini-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "created": int(datetime.now().timestamp()),
+                "usage": {
+                    "prompt_tokens": -1,  # Gemini不提供token计数
+                    "completion_tokens": -1,
+                    "total_tokens": -1
+                }
+            }
+        except Exception as e:
+            logger.error(f"Gemini请求错误: {str(e)}")
+            return {"error": "Gemini请求错误", "detail": str(e)}    
+    async def _collect_gemini_stream(self, model_name, contents, config):
+        """
+        收集Gemini流式响应的完整内容
+        
+        Args:
+            model_name: 模型名称
+            contents: Gemini格式的内容
+            config: 生成配置
+            
+        Returns:
+            完整的响应文本或响应对象(如果有工具调用)
+        """
+        try:
+            # 直接使用非流式API以避免异步/同步混合问题
+            logger.info(f"使用非流式API获取Gemini响应，模型: {model_name}")
+            
+            # 先尝试在执行器中运行同步代码
+            def get_response():
+                try:
+                    return self.gemini_client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=config,
+                    )
+                except Exception as inner_error:
+                    logger.error(f"Gemini API调用失败: {str(inner_error)}")
+                    # 如果错误是因为安全过滤，尝试使用更宽松的安全设置
+                    if "blocked" in str(inner_error).lower() or "safety" in str(inner_error).lower():
+                        logger.info("尝试使用更宽松的安全设置重新请求")
+                        # 配置更宽松的安全设置
+                        safer_config = config
+                        return self.gemini_client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=safer_config,
+                        )
+                    raise
+            
+            # 在线程池中运行同步代码
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(None, get_response)
+            
+            # 检查是否存在函数调用，如果有就直接返回完整响应对象
+            # 这样可以避免尝试提取不存在的文本部分
+            if hasattr(response, 'candidates') and response.candidates:
+                for candidate in response.candidates:
+                    if hasattr(candidate, 'content') and candidate.content and hasattr(candidate.content, 'parts'):
+                        for part in candidate.content.parts:
+                            if hasattr(part, 'function_call') and part.function_call:
+                                logger.info("检测到函数调用，返回完整响应对象")
+                                return response
+            
+            # 如果没有函数调用，尝试获取文本响应
+            # 使用 getattr 避免直接访问 text 属性可能引起的错误
+            response_text = getattr(response, 'text', None)
+            if response_text is not None:
+                logger.info(f"返回Gemini文本响应，长度: {len(response_text)}")
+                return response_text
+            
+            # 尝试从候选结果中提取文本
+            text_parts = []
+            if hasattr(response, 'candidates') and response.candidates:
+                for candidate in response.candidates:
+                    if hasattr(candidate, 'content') and candidate.content:
+                        if hasattr(candidate.content, 'parts'):
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'text') and part.text:
+                                    text_parts.append(part.text)
+            
+            if text_parts:
+                return " ".join(text_parts)
+            
+            # 如果没有找到任何文本或函数调用，返回空字符串而不是错误消息
+            # 这样可以正常处理只有函数调用没有文本的情况
+            return ""
+            
+        except Exception as e:
+            logger.error(f"获取Gemini响应时出错: {str(e)}")
+            return f"Gemini响应错误: {str(e)}"
 
     # MARK: 处理工具调用
     async def handle_tool_call(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
