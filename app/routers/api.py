@@ -25,6 +25,8 @@ async def background_memory_update(user_id: str, prompt: str):
     except Exception as e:
         logger.error(f"后台记忆更新任务失败，用户ID: {user_id}, 错误: {str(e)}")
 
+
+# MARK: chat/completions
 @router.post("/chat/completions", response_model=schemas.ChatCompletionResponse)
 async def chat_completion(
     request: schemas.ChatCompletionRequest,
@@ -57,16 +59,46 @@ async def chat_completion(
     # 获取工具定义（如果启用）
     tools = llm_service.get_tool_definitions(request.enable_search)
     
+    # 获取当前用户消息内容
+    current_content = request.messages[-1].content if request.messages and len(request.messages) > 0 else ""
+    
     # 格式化用户消息，处理文本、图像或音频输入
     user_messages = await llm_service.format_user_message(
-        request.messages[-1].content if request.messages else "",
+        current_content,
         request.image,
         request.audio,
         request.model
     )
     
+    # 处理历史消息逻辑
+    history_messages = []
+    
+    # TODO: 处理多条消息輸入的情况
+    
+    # 只有一条消息或没有消息，且没有禁用历史功能，尝试从数据库获取
+    if not getattr(request, "disable_history", False):
+        # 获取用户最近5条历史消息
+        db_history = get_chat_logs(request.user_id, 5)
+        
+        if db_history:
+            # 将数据库历史记录转换为消息格式
+            # 注意：get_chat_logs 返回的是按时间倒序排列的（最新的在前）
+            # 但对话历史需要按时间正序（最早的在前），所以需要反转列表
+            for entry in reversed(db_history):
+                # 添加用户消息
+                history_messages.append({"role": "user", "content": entry.get("prompt", "")})
+                # 添加助手回复
+                if entry.get("reply"):
+                    history_messages.append({"role": "assistant", "content": entry.get("reply")})
+            
+            logger.info(f"使用数据库获取的历史消息，数量: {len(history_messages)}")
+        else:
+            logger.info("数据库中没有找到历史消息")
+    
     # 准备完整的消息列表：系统提示 + 历史消息 + 当前用户消息
-    full_messages = [system_prompt] + request.messages[:-1] + user_messages
+    full_messages = [system_prompt] + history_messages + user_messages
+    
+    logger.info(f"完整消息列表: {full_messages}")
     
     # 发送LLM请求
     response = await llm_service.send_llm_request(full_messages, request.model, tools)
@@ -140,7 +172,7 @@ async def chat_completion(
         "tool_calls": tool_calls
     }
 
-
+# MARK: Get User Memory
 @router.get("/memory/{user_id}", response_model=schemas.MemoryResponse)
 async def get_user_memory(
     user_id: str,
@@ -154,7 +186,7 @@ async def get_user_memory(
     memory = await memory_service.get_memory(user_id)
     return {"memory": memory}
 
-
+# MARK: Update User Memory
 @router.post("/memory/update", response_model=schemas.MemoryResponse)
 async def update_user_memory(
     request: schemas.MemoryRequest,
@@ -168,7 +200,7 @@ async def update_user_memory(
     memory = await memory_service.update_memory(request.user_id, request.prompt)
     return {"memory": memory}
 
-
+# MARK: Get User Usage
 @router.get("/usage/{user_id}", response_model=schemas.UsageResponse)
 async def get_usage(
     user_id: str,
@@ -187,7 +219,7 @@ async def get_usage(
         "limits": settings.GITHUB_MODEL_USAGE_LIMITS
     }
 
-
+# MARK: Get Chat History
 @router.get("/history/{user_id}")
 async def get_chat_history(
     user_id: str,

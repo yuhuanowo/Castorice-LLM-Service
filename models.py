@@ -39,7 +39,8 @@ class ChatCompletionRequest(BaseModel):
         enable_search: 是否启用搜索功能
         image: 可选的图片base64数据
         audio: 可选的音频base64数据
-        language: 对话语言（默认为繁体中文）
+        language: 对话语言（默认为英语）
+        disable_history: 是否禁用从数据库获取历史记录功能
     """
 
     messages: List[ChatMessage]
@@ -50,6 +51,7 @@ class ChatCompletionRequest(BaseModel):
     image: Optional[str] = None
     audio: Optional[str] = None
     language: str = "en"
+    disable_history: Optional[bool] = False
 
 
 class ChatCompletionResponse(BaseModel):

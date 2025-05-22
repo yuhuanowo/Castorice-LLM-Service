@@ -12,7 +12,7 @@ async def get_api_key(api_key_header: str = Security(api_key_header)):
         return api_key_header
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="无效的API密钥"
+        detail="Invalid API Key",
     )
 
 
