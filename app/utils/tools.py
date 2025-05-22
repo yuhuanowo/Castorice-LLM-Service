@@ -1,6 +1,9 @@
 import aiohttp
 import asyncio
 import base64
+import os
+import time
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from app.utils.logger import logger
 from app.core.config import get_settings
@@ -19,6 +22,8 @@ async def generate_image(prompt: str) -> Optional[str]:
         base64编码的图像数据URI或None
     """
     try:
+        logger.info(f"开始生成图片，提示词: {prompt[:50]}...")
+        
         # 构建请求
         url = f"https://api.cloudflare.com/client/v4/accounts/{settings.CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-1-schnell"
         headers = {
@@ -29,21 +34,68 @@ async def generate_image(prompt: str) -> Optional[str]:
         
         # 发送请求
         async with aiohttp.ClientSession() as session:
+            logger.info(f"向Cloudflare API发送图片生成请求")
             async with session.post(url, json=data, headers=headers) as response:
                 if response.status != 200:
-                    logger.error(f"图像生成API错误: {response.status}")
+                    logger.error(f"图像生成API错误: {response.status}, 响应: {await response.text()[:200]}")
                     return None
                 
                 result = await response.json()
-                if not result or not result.get("result") or not result["result"].get("image"):
-                    logger.error("图像生成响应格式无效")
+                logger.info(f"收到Cloudflare API响应: {str(result)[:100]}...")
+                
+                if not result:
+                    logger.error("API返回空响应")
+                    return None
+                    
+                if not result.get("result"):
+                    logger.error(f"API响应中缺少result字段: {str(result)[:200]}")
+                    return None
+                    
+                if not result["result"].get("image"):
+                    logger.error(f"API响应中缺少image字段: {str(result['result'])[:200]}")
                     return None
                 
                 # 返回dataURI
-                return f"data:image/jpeg;base64,{result['result']['image']}"
+                image_data = f"data:image/jpeg;base64,{result['result']['image']}"
+                logger.info(f"成功生成图片，dataURI长度: {len(image_data)}")
+                
+                # 本地保存图片
+                await save_image_locally(result["result"]["image"], prompt)
+                
+                return image_data
     except Exception as e:
-        logger.error(f"图像生成错误: {str(e)}")
+        logger.error(f"图像生成错误: {str(e)}", exc_info=True)
         return None
+
+
+async def save_image_locally(base64_image: str, prompt: str) -> None:
+    """
+    将base64编码的图像保存到本地
+    
+    Args:
+        base64_image: base64编码的图像数据
+        prompt: 生成图像的提示词，用于文件命名
+    """
+    try:
+        # 创建保存目录
+        image_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "images")
+        os.makedirs(image_dir, exist_ok=True)
+        
+        # 生成文件名 (时间戳 + 提示词前20个字符的安全版本)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_prompt = "".join([c if c.isalnum() else "_" for c in prompt[:20]]).strip("_")
+        filename = f"{timestamp}_{safe_prompt}.jpg"
+        filepath = os.path.join(image_dir, filename)
+        
+        # 解码并保存图像
+        image_bytes = base64.b64decode(base64_image)
+        with open(filepath, "wb") as f:
+            f.write(image_bytes)
+            
+        logger.info(f"图片已保存到本地: {filepath}")
+    except Exception as e:
+        logger.error(f"保存图片到本地时出错: {str(e)}", exc_info=True)
+        # 保存失败不影响主功能
 
 
 async def search_duckduckgo(query: str, num_results: int = 5) -> List[Dict[str, Any]]:

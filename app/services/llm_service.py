@@ -25,6 +25,8 @@ class LLMService:
         self.endpoint = settings.GITHUB_ENDPOINT
         self.api_key = settings.GITHUB_INFERENCE_KEY
         self.api_version = settings.GITHUB_API_VERSION
+        # 存储最近生成的图片
+        self.last_generated_image = None
         
         # 使用量文件路径
         self.usage_path = "./data/usage.json"
@@ -340,13 +342,43 @@ class LLMService:
                 
                 # 图像生成工具
                 if name == "generateImage":
-                    image_data_uri = await generate_image(arguments.get("prompt", ""))
-                    tool_results.append({
-                        "tool_call_id": tool_call.get("id", ""),
-                        "role": "tool",
-                        "name": "generateImage",
-                        "content": json.dumps({"dataURI": image_data_uri})
-                    })
+                    logger.info(f"处理图片生成工具调用，参数: {arguments}")
+                    prompt = arguments.get("prompt", "")
+                    if not prompt:
+                        logger.error("图片生成缺少prompt参数")
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "generateImage",
+                            "content": json.dumps({"error": "missing prompt parameter"})
+                        })
+                        continue
+                        
+                    image_data_uri = await generate_image(prompt)
+                    if image_data_uri:
+                        # 图像生成成功
+                        logger.info(f"图片生成成功，dataURI长度: {len(image_data_uri)}")
+                        
+                        # 存储图片数据以供API响应使用，但不直接发送给LLM
+                        # 将图片数据存储在一个全局变量或上下文中
+                        self.last_generated_image = image_data_uri
+                        
+                        # 只向LLM返回成功消息，不包含实际图片数据
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "generateImage",
+                            "content": json.dumps({"success": True, "message": "图片已成功生成，将在回复中显示"})
+                        })
+                    else:
+                        # 图像生成失败
+                        logger.error("图片生成失败，返回错误信息")
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "generateImage",
+                            "content": json.dumps({"error": "图片生成失败，请稍后重试"})
+                        })
                 
                 # 搜索工具
                 elif name == "searchDuckDuckGo":

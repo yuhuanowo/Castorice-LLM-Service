@@ -64,12 +64,14 @@ class ChatCompletionResponse(BaseModel):
         model: 使用的模型名称
         usage: 使用统计信息
         tool_calls: 可选的工具调用列表
+        image_data_uri: 可选的图片数据URI
     """
 
-    message: str
+    message: str = ""  # 设置默认值为空字符串，避免None值
     model: str
     usage: Dict[str, Any] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
+    image_data_uri: Optional[str] = None  # 新增字段：图片数据URI
 
 
 class MemoryRequest(BaseModel):

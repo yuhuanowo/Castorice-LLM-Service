@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 import logging
 import asyncio
+import json
 logger = logging.getLogger(__name__)
 
 from app.models.mongodb import create_chat_log, get_chat_logs, get_user_usage
@@ -100,6 +101,9 @@ async def chat_completion(
     
     logger.info(f"完整消息列表: {full_messages}")
     
+    # 清除之前可能存在的图片数据
+    llm_service.last_generated_image = None
+    
     # 发送LLM请求
     response = await llm_service.send_llm_request(full_messages, request.model, tools)
     
@@ -111,12 +115,13 @@ async def chat_completion(
         )
     
     # 提取响应内容
-    message = ""
+    message = ""  # 确保默认为空字符串而不是None
     tool_calls = None
+    image_data_uri = None  # 用于存储图片数据URI
     if "choices" in response and response["choices"]:
         choice = response["choices"][0]
         if "message" in choice:
-            message = choice["message"].get("content", "")
+            message = choice["message"].get("content") or ""  # 确保None值被空字符串替换
             # 检查工具调用
             if "tool_calls" in choice["message"]:
                 tool_calls = choice["message"]["tool_calls"]
@@ -125,6 +130,40 @@ async def chat_completion(
     if tool_calls:
         # 执行工具调用并获取结果
         tool_results = await llm_service.handle_tool_call(tool_calls)
+        
+        # 检查是否有图片生成结果
+        for tool_result in tool_results:
+            if tool_result.get("name") == "generateImage":
+                logger.info(f"发现图片生成工具结果: {tool_result.get('name')}")
+                try:
+                    # 尝试从工具结果中提取消息
+                    content_str = tool_result.get("content", "")
+                    logger.info(f"工具结果内容长度: {len(content_str)}")
+                    
+                    # 检查内容是否为空
+                    if not content_str:
+                        logger.error("工具结果内容为空")
+                        continue
+                    
+                    # 直接从LLM服务获取图片数据
+                    image_data_uri = llm_service.last_generated_image
+                    if image_data_uri:
+                        logger.info(f"从LLM服务获取图片dataURI，长度: {len(image_data_uri)}")
+                        # 添加关于图片的描述到消息中
+                        if not message:
+                            message = "已生成图片"
+                    else:
+                        # 尝试解析JSON查找错误信息
+                        try:
+                            content_json = json.loads(content_str)
+                            if "error" in content_json:
+                                logger.error(f"图片生成错误: {content_json['error']}")
+                                message = f"图片生成失败: {content_json['error']}"
+                        except json.JSONDecodeError:
+                            if not message:
+                                message = "收到图片生成结果，但无法获取图片数据"
+                except Exception as e:
+                    logger.error(f"处理图片生成结果错误: {str(e)}", exc_info=True)
         
         # 如果有工具结果，将其添加到对话，并重新请求LLM以获取最终回应
         if tool_results:
@@ -136,7 +175,7 @@ async def chat_completion(
             # 再次发送请求以获取整合工具结果的最终回应
             final_response = await llm_service.send_llm_request(new_messages, request.model)
             if "choices" in final_response and final_response["choices"]:
-                message = final_response["choices"][0]["message"].get("content", message)
+                message = final_response["choices"][0]["message"].get("content") or message  # 确保空值时使用原来的message
     
     # 创建唯一的交互ID用于追踪
     interaction_id = str(uuid.uuid4())
@@ -169,7 +208,8 @@ async def chat_completion(
         "message": message,
         "model": request.model,
         "usage": usage,
-        "tool_calls": tool_calls
+        "tool_calls": tool_calls,
+        "image_data_uri": image_data_uri  # 包含图片数据URI
     }
 
 # MARK: Get User Memory
