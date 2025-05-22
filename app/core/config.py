@@ -30,37 +30,104 @@ class Settings(BaseSettings):
     ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "admin_secret_key")
     
     # 允许的模型列表
-    ALLOWED_MODELS: list = [
-        "openai/gpt-4o", "gpt-4o-mini", "o3-mini", "o1", "o1-mini",
-        "DeepSeek-R1", "Cohere-command-r-08-2024", "Ministral-3B",
-        "DeepSeek-V3-0324", "mistral-small-2503", "gpt-4.1",
-        "gpt-4.1-mini", "gpt-4.1-nano", "o4-mini", "o3",
-        "Meta-Llama-3.1-8B-Instruct","openai/gpt-4.1-nano"
+    ALLOWED_GITHUB_MODELS: list = [
+        # OpenAI
+        "gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o1-preview", "o3-mini", "text-embedding-3-large", "text-embedding-3-small", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o4-mini", "o3",
+        # Cohere
+        "cohere-command-a", "Cohere-command-r-plus-08-2024", "Cohere-command-r-plus", "Cohere-command-r-08-2024", "Cohere-command-r",
+        # Meta
+        "Llama-3.2-11B-Vision-Instruct", "Llama-3.2-90B-Vision-Instruct", "Llama-3.3-70B-Instruct", "Llama-4-Maverick-17B-128E-Instruct-FP8", "Llama-4-Scout-17B-16E-Instruct", 
+        "Meta-Llama-3.1-405B-Instruct", "Meta-Llama-3.1-70B-Instruct", "Meta-Llama-3.1-8B-Instruct", "Meta-Llama-3-70B-Instruct", "Meta-Llama-3-8B-Instruct",
+        # DeepSeek
+        "DeepSeek-R1", "DeepSeek-V3-0324",
+        # Mistral
+        "Ministral-3B", "Mistral-Large-2411", "Mistral-Nemo", "mistral-medium-2505", "mistral-small-2503",
+        # xAI
+        "grok-3", "grok-3-mini",
+        # Microsoft
+        "MAI-DS-R1", "Phi-3.5-MoE-instruct", "Phi-3.5-vision-instruct", "Phi-4", "Phi-4-multimodal-instruct", "Phi-4-reasoning", "mistral-medium-2505", 
+    
     ]
     
     # 模型使用限制
-    MODEL_USAGE_LIMITS: dict = {
-        "openai/gpt-4o": 10,
-        "gpt-4o-mini": 30,
-        "o3-mini": 4,
+
+    # 不支持工具功能的模型列表
+    UNSUPPORTED_TOOL_MODELS: list = [
+        "o1-mini", "phi-4", "DeepSeek-R1", "DeepSeek-V3-0324", "Llama-3.2-11B-Vision-Instruct", "Llama-3.2-90B-Vision-Instruct", "Llama-3.3-70B-Instruct", 
+        "Meta-Llama-3.1-405B-Instruct", "Meta-Llama-3.1-70B-Instruct", "Meta-Llama-3.1-8B-Instruct", "Meta-Llama-3-70B-Instruct", "Meta-Llama-3-8B-Instruct",
+        "MAI-DS-R1", "Phi-3.5-MoE-instruct", "Phi-3.5-vision-instruct", "Phi-4", "Phi-4-multimodal-instruct", "Phi-4-reasoning",
+
+    ]
+    
+    # 使用者倍率 （限制量x使用者倍率＝使用者限制量）
+    USER_LIMIT_MULTIPLIER: float = 0.5  # 使用者倍率
+    # 限制量
+    Low: int = 150 * USER_LIMIT_MULTIPLIER
+    High: int = 50 * USER_LIMIT_MULTIPLIER
+    Embedding: int = 150 * USER_LIMIT_MULTIPLIER
+    
+    # 使用者限制量
+    GITHUB_MODEL_USAGE_LIMITS: dict = {
+        # OpenAI
+        "gpt-4o": High,
+        "gpt-4o-mini": Low,
         "o1": 4,
-        "o1-mini": 4,
-        "DeepSeek-R1": 4,
-        "Cohere-command-r-08-2024": 75,
-        "Ministral-3B": 75,
-        "DeepSeek-V3-0324": 25,
-        "mistral-small-2503": 75,
-        "gpt-4.1": 10,
-        "gpt-4.1-mini": 30,
-        "gpt-4.1-nano": 30,
-        "o4-mini": 4,
+        "o1-mini": 6,
+        "o1-preview": 4,
+        "o3-mini": 6,
+        "text-embedding-3-large": Embedding,
+        "text-embedding-3-small": Embedding,
+        "gpt-4.1": High,
+        "gpt-4.1-mini": Low,
+        "gpt-4.1-nano": Low,
+        "o4-mini": 6,
         "o3": 4,
-        "Meta-Llama-3.1-8B-Instruct": 10,
-        "openai/gpt-4.1-nano": 10,
+
+        # Cohere    
+        "cohere-command-a": Low,
+        "Cohere-command-r-plus-08-2024": High,
+        "Cohere-command-r-plus": High,
+        "Cohere-command-r-08-2024": Low,
+        "Cohere-command-r": Low,
+
+        # Meta
+        "Llama-3.2-11B-Vision-Instruct": Low,
+        "Llama-3.2-90B-Vision-Instruct": High,
+        "Llama-3.3-70B-Instruct": High,
+        "Llama-4-Maverick-17B-128E-Instruct-FP8": High,
+        "Llama-4-Scout-17B-16E-Instruct": High,
+        "Meta-Llama-3.1-405B-Instruct": High,
+        "Meta-Llama-3.1-70B-Instruct": High,
+        "Meta-Llama-3.1-8B-Instruct": Low,
+        "Meta-Llama-3-70B-Instruct": High,
+        "Meta-Llama-3-8B-Instruct": Low,
+
+        # DeepSeek
+        "DeepSeek-R1": 4,
+        "DeepSeek-V3-0324": High,
+
+        # Mistral
+        "Ministral-3B": Low,
+        "Mistral-Large-2411": High,
+        "Mistral-Nemo": Low,
+        "mistral-medium-2505": Low,
+        "mistral-small-2503": Low,
+
+        # xAI
+        "grok-3": 4,
+        "grok-3-mini": 4,
+
+        # Microsoft
+        "MAI-DS-R1": 4,
+        "Phi-3.5-MoE-instruct": Low,
+        "Phi-3.5-vision-instruct": Low,
+        "Phi-4": Low,
+        "Phi-4-multimodal-instruct": Low,
+        "Phi-4-reasoning": Low
     }
     
     # 默认语言
-    DEFAULT_LANGUAGE: str = "zh-TW"
+    DEFAULT_LANGUAGE: str = "en"
     
     class Config:
         env_file = ".env"

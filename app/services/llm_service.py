@@ -85,8 +85,8 @@ class LLMService:
             return {
                 "selectedModel": model_name,
                 "usage": user_usage[user_id].get(model_name, 0),
-                "limit": settings.MODEL_USAGE_LIMITS.get(model_name, 0),
-                "isExceeded": user_usage[user_id].get(model_name, 0) > settings.MODEL_USAGE_LIMITS.get(model_name, 0)
+                "limit": settings.GITHUB_MODEL_USAGE_LIMITS.get(model_name, 0),
+                "isExceeded": user_usage[user_id].get(model_name, 0) > settings.GITHUB_MODEL_USAGE_LIMITS.get(model_name, 0)
             }
         except Exception as e:
             logger.error(f"更新使用量错误: {str(e)}")
@@ -94,7 +94,7 @@ class LLMService:
             return {
                 "selectedModel": model_name,
                 "usage": 0,
-                "limit": settings.MODEL_USAGE_LIMITS.get(model_name, 0),
+                "limit": settings.GITHUB_MODEL_USAGE_LIMITS.get(model_name, 0),
                 "isExceeded": False
             }
 
@@ -291,7 +291,7 @@ class LLMService:
         }
         
         # 对支持工具的模型添加工具定义
-        if tools and model_name != "o1-mini":
+        if tools and model_name.lower() not in [m.lower() for m in settings.UNSUPPORTED_TOOL_MODELS]:
             body["tools"] = tools
             
         try:

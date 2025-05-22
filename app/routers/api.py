@@ -37,10 +37,10 @@ async def chat_completion(
     此端点处理与大型语言模型的对话，支持工具调用、多模态输入和记忆更新
     """
     # 验证模型名称是否在允许列表中
-    if request.model not in settings.ALLOWED_MODELS:
+    if request.model not in settings.ALLOWED_GITHUB_MODELS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"模型 {request.model} 不受支持。支持的模型: {', '.join(settings.ALLOWED_MODELS)}"
+            detail=f"模型 {request.model} 不受支持。支持的模型: {', '.join(settings.ALLOWED_GITHUB_MODELS)}"
         )
     
     # 检查用户使用限制，更新使用统计
@@ -184,7 +184,7 @@ async def get_usage(
     return {
         "user_id": user_id,
         "usage": usage_data,
-        "limits": settings.MODEL_USAGE_LIMITS
+        "limits": settings.GITHUB_MODEL_USAGE_LIMITS
     }
 
 
