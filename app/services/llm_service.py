@@ -22,9 +22,9 @@ class LLMService:
     """
     def __init__(self):
         # API基础设置
-        self.endpoint = settings.AZURE_ENDPOINT
-        self.api_key = settings.AZURE_INFERENCE_KEY
-        self.api_version = settings.AZURE_API_VERSION
+        self.endpoint = settings.GITHUB_ENDPOINT
+        self.api_key = settings.GITHUB_INFERENCE_KEY
+        self.api_version = settings.GITHUB_API_VERSION
         
         # 使用量文件路径
         self.usage_path = "./data/usage.json"
@@ -99,7 +99,7 @@ class LLMService:
             }
 
     # MARK: 处理系统提示和工具定义
-    def get_system_prompt(self, model_name: str, language: str = "zh-CN") -> Dict[str, str]:
+    def get_system_prompt(self, model_name: str, language: str = "en") -> Dict[str, str]:
         """
         获取系统提示 - 根据模型和语言选择合适的系统提示
         
@@ -118,7 +118,7 @@ class LLMService:
         }
         
         # 获取基础提示并添加语言选择
-        base_prompt = prompts.get(language, prompts['zh-TW'])
+        base_prompt = prompts.get(language, prompts['en'])
         base_prompt = f"{base_prompt}语言选择: {language}"
         
         # 根据不同模型确定角色

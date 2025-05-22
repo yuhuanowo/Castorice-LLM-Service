@@ -14,15 +14,12 @@ class Settings(BaseSettings):
     SQLITE_DB: str = os.getenv("SQLITE_DB", "./chatlog.db")
 
     # LLM API密钥
-    AZURE_INFERENCE_KEY: str = os.getenv("AZURE_INFERENCE_KEY", "")
-    AZURE_ENDPOINT: str = os.getenv("AZURE_ENDPOINT", "https://models.inference.ai.azure.com")
-    AZURE_API_VERSION: str = os.getenv("AZURE_API_VERSION", "2025-03-01-preview")
+    GITHUB_INFERENCE_KEY: str = os.getenv("GITHUB_INFERENCE_KEY", "")
+    GITHUB_ENDPOINT: str = os.getenv("GITHUB_ENDPOINT", "https://models.inference.ai.azure.com")
+    GITHUB_API_VERSION: str = os.getenv("GITHUB_API_VERSION", "2025-04-01-preview")
     
     # GitHub Token (用于 GitHub 的模型调用)
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
-    
-    # SDK 配置
-    USE_AZURE_SDK: bool = os.getenv("USE_AZURE_SDK", "false").lower() == "true"
     
     # 工具配置
     CLOUDFLARE_API_KEY: str = os.getenv("CLOUDFLARE_API_KEY", "")

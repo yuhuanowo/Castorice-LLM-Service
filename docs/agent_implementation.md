@@ -780,9 +780,9 @@ class EmbeddingService:
     """嵌入向量服务类"""
     
     def __init__(self):
-        self.endpoint = settings.AZURE_ENDPOINT
-        self.api_key = settings.AZURE_INFERENCE_KEY
-        self.api_version = settings.AZURE_API_VERSION
+        self.endpoint = settings.GITHUB_ENDPOINT
+        self.api_key = settings.GITHUB_INFERENCE_KEY
+        self.api_version = settings.GITHUB_API_VERSION
         self.embedding_model = "text-embedding-ada-002"  # 或其他嵌入模型
         
     async def get_embedding(self, text: str) -> List[float]:

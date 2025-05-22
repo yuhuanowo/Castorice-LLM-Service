@@ -18,9 +18,9 @@ settings = get_settings()
 class MemoryService:
     """記憶服務類"""
     def __init__(self):
-        self.endpoint = settings.AZURE_ENDPOINT
-        self.api_key = settings.AZURE_INFERENCE_KEY
-        self.api_version = settings.AZURE_API_VERSION
+        self.endpoint = settings.GITHUB_ENDPOINT
+        self.api_key = settings.GITHUB_INFERENCE_KEY
+        self.api_version = settings.GITHUB_API_VERSION
         self.memory_model = "Meta-Llama-3.1-8B-Instruct"  # 用於記憶處理的模型
         
     async def update_memory(self, user_id: str, prompt: str) -> str:

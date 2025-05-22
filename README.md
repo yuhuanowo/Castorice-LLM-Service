@@ -15,7 +15,7 @@
 
 - **后端框架**: FastAPI
 - **数据库**: MongoDB 和 SQLite (双重存储)
-- **AI 模型**: 通过 Azure AI 推理服务调用各类 LLM 模型
+- **AI 模型**: 通过 GitHub Model 推理服务调用各类 LLM 模型
 - **异步处理**: 使用 Python asyncio 优化性能
 
 ## 设置说明
@@ -42,9 +42,9 @@ In addition to these extension there a few settings that are also useful to enab
 ```env
 MONGODB_URL=mongodb://localhost:27017/agent
 SQLITE_DB=./chatlog.db
-AZURE_INFERENCE_KEY=your_azure_key_here
-AZURE_ENDPOINT=https://models.inference.ai.azure.com
-AZURE_API_VERSION=2025-03-01-preview
+GITHUB_INFERENCE_KEY=your_GITHUB_KEY_here
+GITHUB_ENDPOINT=https://models.inference.ai.azure.com
+GITHUB_API_VERSION=2025-03-01-preview
 CLOUDFLARE_API_KEY=your_cloudflare_key_here
 CLOUDFLARE_ACCOUNT_ID=your_cloudflare_account_id_here
 ADMIN_API_KEY=your_admin_api_key_here

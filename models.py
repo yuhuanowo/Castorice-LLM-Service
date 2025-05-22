@@ -49,7 +49,7 @@ class ChatCompletionRequest(BaseModel):
     enable_search: Optional[bool] = False
     image: Optional[str] = None
     audio: Optional[str] = None
-    language: str = "zh-TW"
+    language: str = "en"
 
 
 class ChatCompletionResponse(BaseModel):
