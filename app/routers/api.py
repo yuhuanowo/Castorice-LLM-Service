@@ -73,9 +73,12 @@ async def chat_completion(
     
     # 获取系统提示（根据模型和语言定制）
     system_prompt = llm_service.get_system_prompt(request.model, request.language)
-    
-    # 获取工具定义（如果启用）
-    tools = llm_service.get_tool_definitions(request.enable_search)
+      # 获取工具定义（如果启用）
+    tools = llm_service.get_tool_definitions(
+        enable_search=request.enable_search,
+        include_advanced_tools=False,
+        enable_mcp=settings.MCP_SUPPORT_ENABLED and settings.AGENT_ENABLE_MCP
+    )
     
     # 获取当前用户消息内容
     current_content = request.messages[-1].content if request.messages and len(request.messages) > 0 else ""

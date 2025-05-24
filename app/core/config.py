@@ -9,6 +9,25 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     DEBUG: bool = True
     
+    # Agent配置
+    AGENT_MAX_STEPS: int = 10  # 最大执行步骤数
+    AGENT_REFLECTION_THRESHOLD: int = 3  # 每执行多少步骤进行一次反思
+    AGENT_CONFIDENCE_THRESHOLD: float = 0.7  # 置信度阈值，低于此值会触发反思
+    AGENT_ENABLE_MCP: bool = True  # 是否默认启用MCP
+    AGENT_DEFAULT_MODEL: str = "gpt-4o-mini"  # 默认Agent使用的模型
+    AGENT_SHORT_TERM_MEMORY_MAX_MESSAGES: int = 5  # 短期记忆最大消息数量
+    AGENT_LONG_TERM_MEMORY_MAX_TOKENS: int = 4096  # 长期记忆最大token数
+    AGENT_DEFAULT_ADVANCED_TOOLS: bool = True  # 是否默认启用高级工具
+    AGENT_ENABLE_SELF_EVALUATION: bool = True  # 是否启用自我评估
+    AGENT_AUTO_SAVE_MEMORY: bool = True  # 是否自动保存记忆
+    AGENT_REACT_MODE_ENABLED: bool = True  # 是否默认启用ReAct模式
+    
+    # MCP协议配置
+    MCP_VERSION: str = "0.1.0"  # MCP协议版本
+    MCP_MAX_CONTEXT_TOKENS: int = 16000  # MCP最大上下文长度
+    MCP_SUPPORTED_MODELS: list = ["gpt-4o", "gpt-4o-mini", "o1", "DeepSeek-V3-0324", "gpt-4.1-mini", "gemini-1.5-pro", "Cohere-command-r-plus-08-2024", "Mistral-Nemo", "Mistral-Large-2411", "gemini-2.0-flash"]# 支持MCP的模型列表
+    MCP_SUPPORT_ENABLED: bool = True  # 是否启用MCP协议支持
+    
     # 数据库配置
     MONGODB_URL: str = os.getenv("MONGODB_URL", "mongodb://localhost:27017/agent")
     SQLITE_DB: str = os.getenv("SQLITE_DB", "./chatlog.db")

@@ -167,12 +167,15 @@ class LLMService:
             "content": base_prompt
         }
     # MARK: 处理工具定义
-    def get_tool_definitions(self, enable_search: bool = False) -> List[Dict[str, Any]]:
+    
+    def get_tool_definitions(self, enable_search: bool = False, include_advanced_tools: bool = False, enable_mcp: bool = False) -> List[Dict[str, Any]]:
         """
         获取工具定义 - 提供可用于模型的外部工具定义
         
         Args:
             enable_search: 是否启用搜索功能
+            include_advanced_tools: 是否包含高级工具
+            enable_mcp: 是否启用MCP工具
             
         Returns:
             工具定义列表
@@ -195,13 +198,12 @@ class LLMService:
                 }
             }
         }
-        
-        # 搜索工具定义
+          # 搜索工具定义        
         search_tool = {
             "type": "function",
             "function": {
                 "name": "searchDuckDuckGo",
-                "description": "使用 DuckDuckGo 搜索引擎进行搜索，返回相关的搜索结果",
+                "description": "使用 DuckDuckGo 搜索引擎进行搜索，仅返回搜索结果的简要信息（标题、摘要和URL）。如果需要获取特定网页的详细内容，请在搜索后使用 fetchWebpageContent 工具，但仅对真正需要深入了解的个别URL使用，以避免过多token消耗。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -213,19 +215,471 @@ class LLMService:
                             "type": "integer",
                             "description": "返回的搜索结果数量",
                             "default": 10,
-                        },
+                        }
                     },
                     "required": ["query"],
                 }
             }
         }
         
-        # 构建工具列表
+        # 高级工具定义列表
+        advanced_tools = []
+        
+        if include_advanced_tools:
+            # 网页内容获取工具            
+            webpage_tool = {
+                "type": "function",
+                "function": {
+                    "name": "fetchWebpageContent",
+                    "description": "获取网页内容并提取正文文本。注意：此工具会消耗大量token，请谨慎使用。仅在需要深入了解特定网页内容时使用，不要对搜索结果中的每个URL都使用此工具。最佳实践是：先用searchDuckDuckGo获取摘要，然后根据需要仅对1-2个最相关的URL使用此工具。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "description": "网页URL"
+                            }
+                        },
+                        "required": ["url"]
+                    }
+                }
+            }
+            advanced_tools.append(webpage_tool)
+            
+            # 文本分析工具
+            text_analysis_tool = {
+                "type": "function",
+                "function": {
+                    "name": "analyzeText",
+                    "description": "分析文本内容，执行摘要、情感分析等任务",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "text": {
+                                "type": "string",
+                                "description": "待分析的文本"
+                            },
+                            "task": {
+                                "type": "string",
+                                "description": "分析任务描述，如'摘要','情感分析','关键词提取'等"
+                            }
+                        },
+                        "required": ["text", "task"]
+                    }
+                }
+            }
+            advanced_tools.append(text_analysis_tool)
+            
+            # 内容格式转换工具
+            format_tool = {
+                "type": "function",
+                "function": {
+                    "name": "formatContent",
+                    "description": "将内容转换为指定格式，如JSON、Markdown、HTML、CSV等",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "content": {
+                                "type": "string",
+                                "description": "需要格式化的内容"
+                            },
+                            "outputFormat": {
+                                "type": "string",
+                                "description": "输出格式，支持'json','markdown','html','csv'"
+                            }
+                        },
+                        "required": ["content", "outputFormat"]
+                    }
+                }
+            }
+            advanced_tools.append(format_tool)
+            
+            # Agent性能评估工具
+            evaluation_tool = {
+                "type": "function",
+                "function": {
+                    "name": "evaluateAgentPerformance",
+                    "description": "评估Agent执行性能，包括时间、步骤数、成功率等指标",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "executionTrace": {
+                                "type": "array",
+                                "description": "执行跟踪记录",
+                                "items": {
+                                    "type": "object"
+                                }
+                            },
+                            "expectedOutcome": {
+                                "type": "string",
+                                "description": "期望的结果描述（可选）"
+                            }
+                        },
+                        "required": ["executionTrace"]
+                    }
+                }
+            }
+            advanced_tools.append(evaluation_tool)
+            
+            # 新增工具: 结构化数据生成
+            structured_data_tool = {
+                "type": "function",
+                "function": {
+                    "name": "generateStructuredData",
+                    "description": "生成结构化数据，如JSON、CSV、表格等",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "data_type": {
+                                "type": "string",
+                                "description": "数据类型，如'json', 'csv', 'table', 'form'"
+                            },
+                            "requirements": {
+                                "type": "string",
+                                "description": "数据需求描述"
+                            },
+                            "schema": {
+                                "type": "object",
+                                "description": "可选的数据模式定义"
+                            }
+                        },
+                        "required": ["data_type", "requirements"]
+                    }
+                }
+            }
+            advanced_tools.append(structured_data_tool)
+            
+            # 新增工具: 文本摘要
+            summarize_tool = {
+                "type": "function",
+                "function": {
+                    "name": "summarizeContent",
+                    "description": "对长文本内容进行摘要",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "text": {
+                                "type": "string",
+                                "description": "待摘要的文本"
+                            },
+                            "max_length": {
+                                "type": "integer",
+                                "description": "摘要最大长度（字符数）",
+                                "default": 500
+                            }
+                        },
+                        "required": ["text"]
+                    }
+                }
+            }
+            advanced_tools.append(summarize_tool)
+            
+            # 新增工具: 文本翻译
+            translate_tool = {
+                "type": "function",
+                "function": {
+                    "name": "translateText",
+                    "description": "将文本翻译成指定语言",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "text": {
+                                "type": "string",
+                                "description": "待翻译的文本"
+                            },
+                            "target_language": {
+                                "type": "string",
+                                "description": "目标语言，如'en', 'zh-CN', 'ja', 'fr'"
+                            }
+                        },
+                        "required": ["text", "target_language"]
+                    }
+                }
+            }
+            advanced_tools.append(translate_tool)
+            
+            # 新增工具: 数据问答
+            data_qa_tool = {
+                "type": "function",
+                "function": {
+                    "name": "answerFromData",
+                    "description": "根据提供的数据回答问题",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "description": "问题"
+                            },
+                            "data": {
+                                "type": "array",
+                                "description": "数据列表，每项是一个字典",
+                                "items": {
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "required": ["question", "data"]
+                    }
+                }
+            }
+            advanced_tools.append(data_qa_tool)
+            
+            # 新增工具: 保存到记忆
+            save_memory_tool = {
+                "type": "function",
+                "function": {
+                    "name": "saveToMemory",
+                    "description": "将数据保存到用户记忆中",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "user_id": {
+                                "type": "string",
+                                "description": "用户ID"
+                            },
+                            "key": {
+                                "type": "string",
+                                "description": "记忆键名"
+                            },
+                            "value": {
+                                "type": "object",
+                                "description": "记忆值"
+                            }
+                        },
+                        "required": ["user_id", "key", "value"]
+                    }
+                }
+            }
+            advanced_tools.append(save_memory_tool)
+            
+            # 新增工具: 从记忆检索
+            retrieve_memory_tool = {
+                "type": "function",
+                "function": {
+                    "name": "retrieveFromMemory",
+                    "description": "从用户记忆中检索数据",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "user_id": {
+                                "type": "string",
+                                "description": "用户ID"
+                            },
+                            "key": {
+                                "type": "string",
+                                "description": "记忆键名，如果为空则返回所有记忆"
+                            }
+                        },
+                        "required": ["user_id"]
+                    }
+                }
+            }
+            advanced_tools.append(retrieve_memory_tool)
+            
+            # 新增工具: 创建日程计划
+            date_plan_tool = {
+                "type": "function",
+                "function": {
+                    "name": "createDatePlan",
+                    "description": "创建日程计划",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "location": {
+                                "type": "string",
+                                "description": "地点"
+                            },
+                            "interests": {
+                                "type": "array",
+                                "description": "兴趣列表",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "budget": {
+                                "type": "string",
+                                "description": "预算（可选）"
+                            },
+                            "duration": {
+                                "type": "string",
+                                "description": "持续时间（可选）"
+                            }
+                        },
+                        "required": ["location", "interests"]
+                    }
+                }
+            }
+            advanced_tools.append(date_plan_tool)
+            
+            # 新增工具: 信息整合
+            integrate_info_tool = {
+                "type": "function",
+                "function": {
+                    "name": "integrateInformation",
+                    "description": "整合多个信息源并回答问题",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "sources": {
+                                "type": "array",
+                                "description": "信息源列表，每项是一段文本",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "question": {
+                                "type": "string",
+                                "description": "需要回答的问题"
+                            },
+                            "format": {
+                                "type": "string",
+                                "description": "输出格式，如'markdown', 'json', 'html'",
+                                "default": "markdown"
+                            }
+                        },
+                        "required": ["sources", "question"]
+                    }
+                }
+            }
+            advanced_tools.append(integrate_info_tool)
+            
+            # 新增工具: 代码生成
+            code_gen_tool = {
+                "type": "function",
+                "function": {
+                    "name": "generateCode",
+                    "description": "生成代码",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "requirement": {
+                                "type": "string",
+                                "description": "代码需求描述"
+                            },
+                            "language": {
+                                "type": "string",
+                                "description": "编程语言，如'python', 'javascript', 'java'"
+                            },
+                            "framework": {
+                                "type": "string",
+                                "description": "可选的框架，如'react', 'fastapi', 'spring'"
+                            }
+                        },
+                        "required": ["requirement", "language"]
+                    }
+                }
+            }
+            advanced_tools.append(code_gen_tool)
+              # 构建工具列表
         tools = [image_tool]
         if enable_search:
             tools.append(search_tool)
             
+        # 添加高级工具
+        tools.extend(advanced_tools)
+          
+        # 添加MCP工具（如果启用）
+        if enable_mcp:
+            try:
+                from app.services.mcp_client import mcp_client
+                
+                # 直接获取已缓存的MCP工具，避免在当前同步函数中尝试异步操作
+                available_tools = mcp_client.get_available_tools()
+                if available_tools:
+                    # 将MCP工具转换为OpenAI函数格式
+                    mcp_tool_definitions = []
+                    
+                    for tool_key, mcp_tool in available_tools.items():
+                        try:
+                            # 创建工具定义，遵循OpenAI Functions格式
+                            tool_def = {
+                                "type": "function",
+                                "function": {
+                                    "name": f"mcp_{tool_key.replace(':', '_')}",
+                                    "description": f"[MCP] {mcp_tool.description}",
+                                    "parameters": mcp_tool.inputSchema
+                                }
+                            }
+                            
+                            # 确保参数schema符合OpenAI格式
+                            if "type" not in tool_def["function"]["parameters"]:
+                                tool_def["function"]["parameters"]["type"] = "object"
+                            
+                            if "properties" not in tool_def["function"]["parameters"]:
+                                tool_def["function"]["parameters"]["properties"] = {}
+                                
+                            mcp_tool_definitions.append(tool_def)
+                            
+                        except Exception as e:
+                            logger.warning(f"转换MCP工具定义失败 {tool_key}: {e}")
+                            continue
+                    
+                    logger.info(f"添加 {len(mcp_tool_definitions)} 个MCP工具到工具定义中")
+                    tools.extend(mcp_tool_definitions)
+                else:
+                    logger.warning("没有可用的MCP工具")
+            except Exception as e:
+                logger.warning(f"获取MCP工具失败: {e}")
+            
         return tools
+    async def _get_mcp_tools(self) -> List[Dict[str, Any]]:
+        """
+        动态获取MCP工具定义 - 从实际连接的MCP服务器获取工具
+        这是真正的接口实现，不预定义任何工具
+        
+        Returns:
+            从MCP服务器动态获取的工具定义列表
+        """
+        try:
+            from app.services.mcp_client import mcp_client, init_mcp_client
+              # 确保MCP客户端已初始化
+            await init_mcp_client()
+            
+            # 获取所有可用的MCP工具
+            available_tools = mcp_client.get_available_tools()
+            
+            if not available_tools:
+                logger.info("当前没有可用的MCP工具")
+                return []
+            
+            # 将MCP工具转换为OpenAI函数格式
+            mcp_tool_definitions = []
+            
+            for tool_key, mcp_tool in available_tools.items():
+                try:
+                    # 创建工具定义，遵循OpenAI Functions格式
+                    tool_def = {
+                        "type": "function",
+                        "function": {
+                            "name": f"mcp_{tool_key.replace(':', '_')}",  # 将server:tool格式转换为mcp_server_tool
+                            "description": f"[MCP] {mcp_tool.description}",
+                            "parameters": mcp_tool.inputSchema
+                        }
+                    }
+                    
+                    # 确保参数schema符合OpenAI格式
+                    if "type" not in tool_def["function"]["parameters"]:
+                        tool_def["function"]["parameters"]["type"] = "object"
+                    
+                    if "properties" not in tool_def["function"]["parameters"]:
+                        tool_def["function"]["parameters"]["properties"] = {}
+                        
+                    mcp_tool_definitions.append(tool_def)
+                    
+                except Exception as e:
+                    logger.warning(f"转换MCP工具定义失败 {tool_key}: {e}")
+                    continue
+            
+            logger.info(f"成功加载 {len(mcp_tool_definitions)} 个MCP工具")
+            return mcp_tool_definitions
+            
+        except ImportError:
+            logger.warning("MCP客户端未安装，跳过MCP工具加载")
+            return []
+        except Exception as e:
+            logger.error(f"获取MCP工具定义失败: {e}")
+            return []
 
     # MARK: Model Provider 選擇
     def _get_model_provider(self, model_name: str) -> ModelProvider:
@@ -336,7 +790,8 @@ class LLMService:
             return await self._send_gemini_request(messages, model_name, tools)
         else:  # 默认使用GitHub模型
             return await self._send_github_request(messages, model_name, tools)
-            
+
+    # MARK: 发送GitHub模型请求
     async def _send_github_request(
         self,
         messages: List[Dict[str, Any]],
@@ -390,6 +845,8 @@ class LLMService:
         except Exception as e:
             logger.error(f"GitHub LLM请求错误: {str(e)}")
             return {"error": "请求错误", "detail": str(e)}
+
+    # MARK: 发送Gemini模型请求
     async def _send_gemini_request(
         self,
         messages: List[Dict[str, Any]],
@@ -641,6 +1098,30 @@ class LLMService:
         """
         tool_results = []
         
+        # 检查工具调用是否为None
+        if tool_calls is None:
+            logger.warning("工具调用为None，返回空结果列表")
+            return tool_results
+          # 导入工具函数
+        from app.utils.tools import (
+            generate_image, 
+            search_duckduckgo,
+            fetch_webpage_content,
+            analyze_text,
+            format_content,
+            evaluate_agent_performance,
+            generate_structured_data,
+            summarize_content,
+            translate_text,
+            answer_from_data,
+            save_to_memory,
+            retrieve_from_memory,
+            create_date_plan,
+            integrate_information,
+            generate_code
+        )
+        # 注意：不再导入MCP工具，MCP工具应该由MCP客户端动态处理
+        
         # 逐个处理工具调用
         for tool_call in tool_calls:
             function_call = tool_call.get("function", {})
@@ -690,19 +1171,333 @@ class LLMService:
                             "name": "generateImage",
                             "content": json.dumps({"error": "图片生成失败，请稍后重试"})
                         })
-                
-                # 搜索工具
+                  # 搜索工具
                 elif name == "searchDuckDuckGo":
                     search_results = await search_duckduckgo(
                         arguments.get("query", ""),
                         arguments.get("numResults", 5)
                     )
+                    
                     tool_results.append({
                         "tool_call_id": tool_call.get("id", ""),
                         "role": "tool",
                         "name": "searchDuckDuckGo",
                         "content": json.dumps({"results": search_results})
                     })
+                
+                # 网页内容获取工具
+                elif name == "fetchWebpageContent":
+                    url = arguments.get("url", "")
+                    if not url:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "fetchWebpageContent",
+                            "content": json.dumps({"error": "missing url parameter"})
+                        })
+                        continue
+                        
+                    webpage_content = await fetch_webpage_content(url)
+                    if webpage_content:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "fetchWebpageContent",
+                            "content": json.dumps({"success": True, "content": webpage_content})
+                        })
+                    else:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "fetchWebpageContent",
+                            "content": json.dumps({"error": "Failed to fetch webpage content"})
+                        })
+                
+                # 文本分析工具
+                elif name == "analyzeText":
+                    text = arguments.get("text", "")
+                    task = arguments.get("task", "")
+                    if not text or not task:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "analyzeText",
+                            "content": json.dumps({"error": "missing required parameters"})
+                        })
+                        continue
+                        
+                    analysis_result = await analyze_text(text, task)
+                    tool_results.append({
+                        "tool_call_id": tool_call.get("id", ""),
+                        "role": "tool",
+                        "name": "analyzeText",
+                        "content": json.dumps(analysis_result)
+                    })
+                
+                # 内容格式转换工具
+                elif name == "formatContent":
+                    content = arguments.get("content", "")
+                    output_format = arguments.get("outputFormat", "")
+                    if not content or not output_format:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "formatContent",
+                            "content": json.dumps({"error": "missing required parameters"})
+                        })
+                        continue
+                        
+                    format_result = await format_content(content, output_format)
+                    tool_results.append({
+                        "tool_call_id": tool_call.get("id", ""),
+                        "role": "tool",
+                        "name": "formatContent",
+                        "content": json.dumps(format_result)
+                    })
+                
+                # Agent性能评估工具
+                elif name == "evaluateAgentPerformance":
+                    execution_trace = arguments.get("executionTrace", [])
+                    expected_outcome = arguments.get("expectedOutcome", None)
+                    
+                    evaluation_result = await evaluate_agent_performance(execution_trace, expected_outcome)
+                    tool_results.append({
+                        "tool_call_id": tool_call.get("id", ""),
+                        "role": "tool",
+                        "name": "evaluateAgentPerformance",
+                        "content": json.dumps(evaluation_result)
+                    })
+                
+                # 新增工具处理: 结构化数据生成
+                elif name == "generateStructuredData":
+                    data_type = arguments.get("data_type", "")
+                    requirements = arguments.get("requirements", "")
+                    schema = arguments.get("schema", None)
+                    
+                    if not data_type or not requirements:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "generateStructuredData",
+                            "content": json.dumps({"error": "missing required parameters"})
+                        })
+                        continue
+                        
+                    result = await generate_structured_data(data_type, requirements, schema)
+                    tool_results.append({
+                        "tool_call_id": tool_call.get("id", ""),
+                        "role": "tool",
+                        "name": "generateStructuredData",
+                        "content": json.dumps(result)
+                    })
+                
+                # 新增工具处理: 文本摘要
+                elif name == "summarizeContent":
+                    text = arguments.get("text", "")
+                    max_length = arguments.get("max_length", 500)
+                    
+                    if not text:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "summarizeContent",
+                            "content": json.dumps({"error": "missing text parameter"})
+                        })
+                        continue
+                        
+                    result = await summarize_content(text, max_length)
+                    tool_results.append({
+                        "tool_call_id": tool_call.get("id", ""),
+                        "role": "tool",
+                        "name": "summarizeContent",
+                        "content": json.dumps(result)
+                    })
+                
+                # 新增工具处理: 文本翻译
+                elif name == "translateText":
+                    text = arguments.get("text", "")
+                    target_language = arguments.get("target_language", "")
+                    
+                    if not text or not target_language:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "translateText",
+                            "content": json.dumps({"error": "missing required parameters"})
+                        })
+                        continue
+                        
+                    result = await translate_text(text, target_language)
+                    tool_results.append({
+                        "tool_call_id": tool_call.get("id", ""),
+                        "role": "tool",
+                        "name": "translateText",
+                        "content": json.dumps(result)
+                    })
+                
+                # 新增工具处理: 数据问答
+                elif name == "answerFromData":
+                    question = arguments.get("question", "")
+                    data = arguments.get("data", [])
+                    
+                    if not question or not data:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "answerFromData",
+                            "content": json.dumps({"error": "missing required parameters"})
+                        })
+                        continue
+                        
+                    result = await answer_from_data(question, data)
+                    tool_results.append({
+                        "tool_call_id": tool_call.get("id", ""),
+                        "role": "tool",
+                        "name": "answerFromData",
+                        "content": json.dumps(result)
+                    })
+                
+                # 新增工具处理: 保存到记忆
+                elif name == "saveToMemory":
+                    user_id = arguments.get("user_id", "")
+                    key = arguments.get("key", "")
+                    value = arguments.get("value", {})
+                    
+                    if not user_id or not key:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "saveToMemory",
+                            "content": json.dumps({"error": "missing required parameters"})
+                        })
+                        continue
+                        
+                    result = await save_to_memory(user_id, key, value)
+                    tool_results.append({
+                        "tool_call_id": tool_call.get("id", ""),
+                        "role": "tool",
+                        "name": "saveToMemory",
+                        "content": json.dumps(result)
+                    })
+                
+                # 新增工具处理: 从记忆检索
+                elif name == "retrieveFromMemory":
+                    user_id = arguments.get("user_id", "")
+                    key = arguments.get("key", None)
+                    
+                    if not user_id:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "retrieveFromMemory",
+                            "content": json.dumps({"error": "missing user_id parameter"})
+                        })
+                        continue
+                        
+                    result = await retrieve_from_memory(user_id, key)
+                    tool_results.append({
+                        "tool_call_id": tool_call.get("id", ""),
+                        "role": "tool",
+                        "name": "retrieveFromMemory",
+                        "content": json.dumps(result)
+                    })
+                
+                # 新增工具处理: 创建日程计划
+                elif name == "createDatePlan":
+                    location = arguments.get("location", "")
+                    interests = arguments.get("interests", [])
+                    budget = arguments.get("budget", None)
+                    duration = arguments.get("duration", None)
+                    
+                    if not location or not interests:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "createDatePlan",
+                            "content": json.dumps({"error": "missing required parameters"})
+                        })
+                        continue
+                        
+                    result = await create_date_plan(location, interests, budget, duration)
+                    tool_results.append({
+                        "tool_call_id": tool_call.get("id", ""),
+                        "role": "tool",
+                        "name": "createDatePlan",
+                        "content": json.dumps(result)
+                    })
+                
+                # 新增工具处理: 信息整合
+                elif name == "integrateInformation":
+                    sources = arguments.get("sources", [])
+                    question = arguments.get("question", "")
+                    format = arguments.get("format", "markdown")
+                    
+                    if not sources or not question:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "integrateInformation",
+                            "content": json.dumps({"error": "missing required parameters"})
+                        })
+                        continue
+                        
+                    result = await integrate_information(sources, question, format)
+                    tool_results.append({
+                        "tool_call_id": tool_call.get("id", ""),
+                        "role": "tool",
+                        "name": "integrateInformation",
+                        "content": json.dumps(result)
+                    })
+                
+                # 新增工具处理: 代码生成
+                elif name == "generateCode":
+                    requirement = arguments.get("requirement", "")
+                    language = arguments.get("language", "")
+                    framework = arguments.get("framework", None)
+                    
+                    if not requirement or not language:
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": "generateCode",
+                            "content": json.dumps({"error": "missing required parameters"})
+                        })
+                        continue
+                        
+                    result = await generate_code(requirement, language, framework)
+                    tool_results.append({
+                        "tool_call_id": tool_call.get("id", ""),
+                        "role": "tool",
+                        "name": "generateCode",
+                        "content": json.dumps(result)
+                    })
+                  # MCP工具调用处理
+                elif name.startswith("mcp_"):
+                    # 这是MCP工具调用，通过MCP客户端处理
+                    try:
+                        # 将mcp_server_tool格式转换回server:tool
+                        tool_key = name[4:].replace('_', ':', 1)  # 移除mcp_前缀，第一个_替换为:
+                        
+                        from app.services.mcp_client import mcp_client
+                        
+                        # 通过MCP客户端调用工具
+                        mcp_result = await mcp_client.call_tool(tool_key, arguments)
+                        
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": name,
+                            "content": json.dumps(mcp_result)
+                        })
+                        
+                    except Exception as e:
+                        logger.error(f"MCP工具调用失败 {name}: {str(e)}")
+                        tool_results.append({
+                            "tool_call_id": tool_call.get("id", ""),
+                            "role": "tool",
+                            "name": name,
+                            "content": json.dumps({"success": False, "error": f"MCP工具调用失败: {str(e)}"})
+                        })
                 
                 # 不支持的工具
                 else:

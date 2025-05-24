@@ -18,7 +18,7 @@ memory_collection = db["memories"]
 usage_collection = db["usage"]
 
 
-def create_chat_log(user_id: str, model: str, prompt: str, reply: str, interaction_id: str = None):
+async def create_chat_log(user_id: str, model: str, prompt: str, reply: str, interaction_id: str = None):
     """创建聊天记录"""
     chat_log = {
         "user_id": user_id,
@@ -28,7 +28,14 @@ def create_chat_log(user_id: str, model: str, prompt: str, reply: str, interacti
         "timestamp": datetime.now(),
         "interaction_id": interaction_id
     }
-    return chat_log_collection.insert_one(chat_log)
+    
+    try:
+        # 同步插入操作改为手动处理，避免直接await非awaitable对象
+        result = chat_log_collection.insert_one(chat_log)
+        return {"id": str(result.inserted_id), "success": True}
+    except Exception as e:
+        logger.error(f"创建聊天记录错误: {str(e)}")
+        return {"id": None, "success": False, "error": str(e)}
 
 
 def get_chat_logs(user_id: str, limit: int = 10):

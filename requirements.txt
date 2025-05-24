@@ -15,3 +15,13 @@ starlette
 jinja2
 azure-ai-inference
 google-genai
+markdown
+pytest
+pytest-asyncio
+pytest-cov
+asynctest
+aiosignal
+langchain
+html2text
+numpy
+pandas
