@@ -16,8 +16,10 @@ from app.models.mongodb import (
     update_user_memory, 
     get_user_memory,
     get_chat_by_interaction_id,
-    create_chat_log
+    create_chat_log,
+    update_usage
 )
+from app.models.sqlite import update_usage_sqlite
 
 # 导入MCP客户端
 try:
@@ -357,6 +359,7 @@ class AgentService:
                 "content": "你是一个智能助手，能够理解用户的请求并给出清晰的回答。在需要时，你可以使用工具来完成任务。\n\n工具使用指南：\n- 使用searchDuckDuckGo搜索时，先分析搜索结果摘要获取基本信息\n- 不要对每个搜索结果都使用fetchWebpageContent\n- 仅当任务确实需要深入理解某个特定网页内容时，才对1-2个最相关的URL使用fetchWebpageContent\n- 这种有选择性的工具使用方式可以减少token使用量，提高效率"
             }
 
+    # MARK: MCP MOD
     async def _run_mcp_mode(
         self,
         messages: List[Dict[str, Any]],
@@ -414,14 +417,46 @@ class AgentService:
         )
         
         # 开始执行
-        execution_trace.append({
+        execution_trace.append({            
             "timestamp": datetime.now().isoformat(),
             "state": current_state.value,
             "action": "启动MCP模式"
         })
         
-        # 发送初始请求
-        response = await llm_service.send_llm_request(messages, model_name, tools)
+        try:
+            # 更新使用统计
+            await self._update_usage_stats(user_id, model_name)
+            
+            # 发送初始请求
+            response = await llm_service.send_llm_request(messages, model_name, tools)
+        except Exception as e:
+            logger.error(f"MCP模式初始请求错误: {str(e)}")
+            execution_trace.append({
+                "timestamp": datetime.now().isoformat(),
+                "state": AgentState.ERROR.value,
+                "action": "初始请求错误",
+                "error": str(e)
+            })
+            
+            # 提前返回错误结果
+            end_time = time.time()
+            execution_time = end_time - start_time
+            
+            return {
+                "success": False,
+                "interaction_id": interaction_id,
+                "response": {
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": f"很抱歉，处理请求时出错: {str(e)}"
+                        }
+                    }]
+                },
+                "execution_trace": execution_trace,
+                "execution_time": execution_time,
+                "steps_taken": steps_taken
+            }
         
         # 处理工具调用循环
         while "choices" in response and response["choices"] and "tool_calls" in response["choices"][0]["message"]:
@@ -467,17 +502,32 @@ class AgentService:
                     "content": tool_result["content"]
                 })
                   # 检查是否达到最大步骤数
-            max_steps_limit = max_steps if max_steps is not None else self.max_steps
+            max_steps_limit = max_steps if max_steps is not None else self.max_steps            
             if steps_taken >= max_steps_limit:
                 execution_trace.append({
                     "timestamp": datetime.now().isoformat(),
                     "state": AgentState.REFLECTING.value,
-                    "action": "达到最大步骤数，停止执行"
-                })
+                    "action": "达到最大步骤数，停止执行"                
+                    })
                 break
                 
-            # 再次请求模型来处理工具结果
-            response = await llm_service.send_llm_request(messages, model_name, tools)
+            try:
+                # 更新使用统计
+                await self._update_usage_stats(user_id, model_name)
+                    
+                # 再次请求模型来处理工具结果
+                response = await llm_service.send_llm_request(messages, model_name, tools)
+            except Exception as e:
+                logger.error(f"MCP模式循环请求错误: {str(e)}")
+                execution_trace.append({
+                    "timestamp": datetime.now().isoformat(),
+                    "state": AgentState.ERROR.value,
+                    "action": "循环请求错误",
+                    "error": str(e)
+                })
+                
+                # 退出循环
+                break
         
         # 最终响应
         end_time = time.time()
@@ -515,6 +565,8 @@ class AgentService:
             result["generated_image"] = llm_service.last_generated_image
         
         return result
+
+    # MARK: REACT MOD
     async def _run_react_mode(
         self,
         messages: List[Dict[str, Any]],
@@ -575,14 +627,47 @@ class AgentService:
         planning_message = {
             "role": "user",
             "content": "请分析任务并制定解决方案。在回答中，首先思考任务的性质，然后制定具体步骤，最后确定需要使用的工具。"
-        }
-        
+        }     
+
         # 深拷贝messages以避免修改原始消息
         planning_messages = messages.copy()
         planning_messages.append(planning_message)
         
-        # 发送规划请求
-        planning_response = await llm_service.send_llm_request(planning_messages, model_name)
+        try:
+            # 更新使用统计
+            await self._update_usage_stats(user_id, model_name)
+            
+            # 发送规划请求
+            planning_response = await llm_service.send_llm_request(planning_messages, model_name)
+        except Exception as e:
+            logger.error(f"规划阶段错误: {str(e)}")
+            execution_trace.append({
+                "timestamp": datetime.now().isoformat(),
+                "state": AgentState.ERROR.value,
+                "action": "规划错误",
+                "error": str(e)
+            })
+            
+            # 提前返回错误结果
+            end_time = time.time()
+            execution_time = end_time - start_time
+            
+            return {
+                "success": False,
+                "interaction_id": interaction_id,
+                "response": {
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": f"很抱歉，处理请求时出错: {str(e)}"
+                        }
+                    }]
+                },
+                "execution_trace": execution_trace,
+                "reasoning_steps": reasoning_steps,
+                "execution_time": execution_time,
+                "steps_taken": steps_taken
+            }
         
         if "choices" in planning_response and planning_response["choices"]:
             plan = planning_response["choices"][0]["message"]["content"]
@@ -612,14 +697,30 @@ class AgentService:
             "timestamp": datetime.now().isoformat(),
             "state": current_state.value,
             "action": "开始执行任务"
-        })
-        
+        })        
+
         # 主执行循环
         while steps_taken < self.max_steps:
             steps_taken += 1
             
-            # 发送请求，可能包含工具调用
-            response = await llm_service.send_llm_request(messages, model_name, tools)
+            try:
+                # 更新使用统计
+                await self._update_usage_stats(user_id, model_name)
+                
+                # 发送请求，可能包含工具调用
+                response = await llm_service.send_llm_request(messages, model_name, tools)
+            except Exception as e:
+                logger.error(f"执行循环错误: {str(e)}")
+                execution_trace.append({
+                    "timestamp": datetime.now().isoformat(),
+                    "state": AgentState.ERROR.value,
+                    "action": "执行错误",
+                    "error": str(e)
+                })
+                
+                # 提前退出循环
+                current_state = AgentState.ERROR
+                break
             
             # 检查是否有工具调用
             if "choices" in response and response["choices"] and "tool_calls" in response["choices"][0]["message"]:
@@ -700,11 +801,27 @@ class AgentService:
                     reflection_prompt = {
                         "role": "user",
                         "content": "请反思目前的执行情况。评估进展、遇到的问题和可能的改进方向。确定是否需要调整计划或收集更多信息。"
-                    }
+                    }                      
                     messages.append(reflection_prompt)
-                    
-                    # 获取反思结果
-                    reflection_response = await llm_service.send_llm_request(messages, model_name)
+
+                    try:
+                        # 更新使用统计
+                        await self._update_usage_stats(user_id, model_name)
+                        
+                        # 获取反思结果
+                        reflection_response = await llm_service.send_llm_request(messages, model_name)
+                    except Exception as e:
+                        logger.error(f"反思阶段错误: {str(e)}")
+                        execution_trace.append({
+                            "timestamp": datetime.now().isoformat(),
+                            "state": AgentState.ERROR.value,
+                            "action": "反思错误",
+                            "error": str(e)
+                        })
+                        
+                        # 继续执行，不中断整个流程
+                        reflection_content = f"反思过程出错: {str(e)}"
+                        continue
                     
                     if "choices" in reflection_response and reflection_response["choices"]:
                         reflection = reflection_response["choices"][0]["message"]["content"]
@@ -759,12 +876,45 @@ class AgentService:
             # 添加总结提示
             summary_prompt = {
                 "role": "user",
-                "content": "已达到最大执行步骤数。请总结目前的执行情况、已完成的任务和未完成的部分。"
-            }
+                "content": "已达到最大执行步骤数。请总结目前的执行情况、已完成的任务和未完成的部分。"                  
+                }
             messages.append(summary_prompt)
             
-            # 获取总结响应
-            final_response = await llm_service.send_llm_request(messages, model_name)
+            try:
+                # 更新使用统计
+                await self._update_usage_stats(user_id, model_name)
+                
+                # 获取总结响应
+                final_response = await llm_service.send_llm_request(messages, model_name)
+            except Exception as e:
+                logger.error(f"总结阶段错误: {str(e)}")
+                execution_trace.append({
+                    "timestamp": datetime.now().isoformat(),
+                    "state": AgentState.ERROR.value,
+                    "action": "总结错误",
+                    "error": str(e)
+                })
+                
+                # 返回错误结果
+                end_time = time.time()
+                execution_time = end_time - start_time
+                
+                return {
+                    "success": False,
+                    "interaction_id": interaction_id,
+                    "response": {
+                        "choices": [{
+                            "message": {
+                                "role": "assistant",
+                                "content": f"很抱歉，生成总结时出错: {str(e)}"
+                            }
+                        }]
+                    },
+                    "execution_trace": execution_trace,
+                    "reasoning_steps": reasoning_steps,
+                    "execution_time": execution_time,
+                    "steps_taken": steps_taken
+                }
             
             if "choices" in final_response and final_response["choices"]:
                 # 添加总结到消息历史
@@ -796,7 +946,7 @@ class AgentService:
         # 5. 完成执行
         end_time = time.time()
         execution_time = end_time - start_time
-          # 创建聊天日志
+        # 创建聊天日志
         # 提取用户的提示和最终回复
         user_prompt = ""
         for message in messages:
@@ -845,7 +995,8 @@ class AgentService:
                 "content": f"用户请求: {prompt}\n\n请分析这个请求并制定执行计划。"
             }
         ]
-        
+        # 更新使用统计
+        await self._update_usage_stats(user_id, model_name)
         # 发送规划请求
         planning_response = await llm_service.send_llm_request(planning_messages, model_name)
         
@@ -892,7 +1043,9 @@ class AgentService:
                     }
                 ],
                 "executionOrder": ["default"]
-            }    
+            } 
+
+    # MARK: SIMPLE MPD   
     async def _run_simple_mode(
         self,
         messages: List[Dict[str, Any]],
@@ -934,8 +1087,8 @@ class AgentService:
             enable_search=enable_search, 
             include_advanced_tools=include_advanced_tools,
             enable_mcp=enable_mcp
-        )
-        
+        )        
+
         # 记录开始执行
         execution_trace.append({
             "timestamp": datetime.now().isoformat(),
@@ -943,8 +1096,40 @@ class AgentService:
             "action": "开始简单模式执行"
         })
         
-        # 发送请求
-        response = await llm_service.send_llm_request(messages, model_name, tools)
+        try:
+            # 更新使用统计
+            await self._update_usage_stats(user_id, model_name)
+            
+            # 发送请求
+            response = await llm_service.send_llm_request(messages, model_name, tools)
+        except Exception as e:
+            logger.error(f"简单模式执行错误: {str(e)}")
+            execution_trace.append({
+                "timestamp": datetime.now().isoformat(),
+                "state": AgentState.ERROR.value,
+                "action": "执行错误",
+                "error": str(e)
+            })
+            
+            # 提前返回错误结果
+            end_time = time.time()
+            execution_time = end_time - start_time
+            
+            return {
+                "success": False,
+                "interaction_id": interaction_id,
+                "response": {
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": f"很抱歉，处理请求时出错: {str(e)}"
+                        }
+                    }]
+                },
+                "execution_trace": execution_trace,
+                "execution_time": execution_time,
+                "steps_taken": steps_taken
+            }
         
         # 如果有工具调用，处理一次工具调用循环
         if "choices" in response and response["choices"] and "tool_calls" in response["choices"][0]["message"]:
@@ -986,11 +1171,42 @@ class AgentService:
                         "role": "tool",
                         "tool_call_id": tool_result["tool_call_id"],
                         "name": tool_result["name"],
-                        "content": tool_result["content"]
+                        "content": tool_result["content"]                    
+                        })                    
+                try:
+                    # 更新使用统计
+                    await self._update_usage_stats(user_id, model_name)
+                    
+                    # 发送最终请求获取最终回答
+                    response = await llm_service.send_llm_request(messages, model_name, tools)
+                except Exception as e:
+                    logger.error(f"简单模式最终请求错误: {str(e)}")
+                    execution_trace.append({
+                        "timestamp": datetime.now().isoformat(),
+                        "state": AgentState.ERROR.value,
+                        "action": "最终请求错误",
+                        "error": str(e)
                     })
                     
-                # 发送最终请求获取最终回答
-                response = await llm_service.send_llm_request(messages, model_name, tools)
+                    # 返回错误结果
+                    end_time = time.time()
+                    execution_time = end_time - start_time
+                    
+                    return {
+                        "success": False,
+                        "interaction_id": interaction_id,
+                        "response": {
+                            "choices": [{
+                                "message": {
+                                    "role": "assistant",
+                                    "content": f"很抱歉，生成最终回答时出错: {str(e)}"
+                                }
+                            }]
+                        },
+                        "execution_trace": execution_trace,
+                        "execution_time": execution_time,
+                        "steps_taken": steps_taken
+                    }
         
         # 最终响应
         end_time = time.time()
@@ -1016,13 +1232,51 @@ class AgentService:
             "execution_trace": execution_trace,
             "execution_time": execution_time,
             "steps_taken": steps_taken
-        }
+        }    
+    async def _update_usage_stats(self, user_id: str, model_name: str):
+        """
+        更新用户使用统计并检查是否超过限制
         
-        # 只有当实际生成了图片时才包含图片数据
-        if llm_service.last_generated_image is not None:
-            result["generated_image"] = llm_service.last_generated_image
+        Args:
+            user_id: 用户ID
+            model_name: 模型名称
+            
+        Raises:
+            Exception: 如果使用量超过限制
+        """
+        # 更新MongoDB使用统计
+        update_usage(user_id, model_name)
         
-        return result
+        # 更新SQLite使用统计
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        update_usage_sqlite(user_id, model_name, current_date)
+        
+        # 记录日志
+        logger.info(f"已更新用户 {user_id} 使用 {model_name} 的统计")
+        
+        # 从LLM服务获取使用限制信息
+        try:
+            # 获取JSON文件中的使用量信息
+            with open(llm_service.usage_path, "r") as f:
+                user_usage = json.load(f)
+                
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            
+            # 获取用户的当前使用量
+            usage_count = 0
+            if user_id in user_usage and model_name in user_usage[user_id]:
+                usage_count = user_usage[user_id][model_name]
+                
+            # 获取模型的使用限制
+            limit = settings.MODEL_USAGE_LIMITS.get(model_name, 0)
+            
+            # 如果超过限制，则抛出异常
+            if usage_count > limit:
+                raise Exception(f"今日模型 {model_name} 使用量已达上限 ({limit})")
+                
+        except Exception as e:
+            logger.error(f"检查使用量错误: {str(e)}")
+            raise Exception(f"使用量检查失败: {str(e)}")
 
-# 创建单例实例
+# 创建AgentService的单例实例
 agent_service = AgentService()

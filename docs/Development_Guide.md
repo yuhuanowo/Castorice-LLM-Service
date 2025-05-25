@@ -1,23 +1,23 @@
-# 开发指南
+# 開發指南
 
-## 🚀 快速开始
+## 🚀 快速開始
 
-### 环境要求
+### 環境要求
 
 - Python 3.11+
 - MongoDB 4.4+
-- Node.js 16+ (用于MCP服务器)
+- Node.js 16+ (用於MCP伺服器)
 - Git
 
-### 本地开发设置
+### 本地開發設置
 
-1. **克隆项目**
+1. **克隆專案**
    ```bash
    git clone <repository-url>
    cd fastapi-template
    ```
 
-2. **创建虚拟环境**
+2. **建立虛擬環境**
    ```bash
    python -m venv .venv
    # Windows
@@ -26,60 +26,60 @@
    source .venv/bin/activate
    ```
 
-3. **安装依赖**
+3. **安裝依賴**
    ```bash
    pip install -r requirements.txt
-   pip install -r dev-requirements.txt  # 开发依赖
+   pip install -r dev-requirements.txt  # 開發依賴
    ```
 
-4. **配置环境变量**
+4. **配置環境變數**
    ```bash
    cp .env.example .env
-   # 编辑 .env 文件，填入必要的API密钥
+   # 編輯 .env 文件，填入必要的API密鑰
    ```
 
-5. **启动数据库**
+5. **啟動資料庫**
    ```bash
-   # MongoDB (如果本地安装)
+   # MongoDB (如果本地安裝)
    mongod
    
    # 或使用Docker
    docker run -d -p 27017:27017 --name mongodb mongo:latest
    ```
 
-6. **运行应用**
+6. **運行應用**
    ```bash
    uvicorn main:app --reload --port 8000
    ```
 
-## 🧪 开发工作流
+## 🧪 開發工作流
 
-### 代码结构
+### 代碼結構
 
 ```
 app/
 ├── core/               # 核心配置
-│   ├── config.py      # 环境配置
-│   └── dependencies.py # 依赖注入
-├── models/            # 数据模型
+│   ├── config.py      # 環境配置
+│   └── dependencies.py # 依賴注入
+├── models/            # 資料模型
 │   ├── mongodb.py     # MongoDB模型
 │   └── sqlite.py      # SQLite模型
 ├── routers/           # API路由
 │   ├── api.py         # 通用API
-│   └── agent.py       # Agent专用API
-├── services/          # 业务逻辑
-│   ├── agent_service.py    # Agent核心服务
-│   ├── mcp_client.py       # MCP客户端
-│   ├── llm_service.py      # LLM调用服务
-│   └── memory_service.py   # 记忆管理
-└── utils/             # 工具函数
-    ├── logger.py      # 日志工具
-    └── tools.py       # 内置工具
+│   └── agent.py       # Agent專用API
+├── services/          # 業務邏輯
+│   ├── agent_service.py    # Agent核心服務
+│   ├── mcp_client.py       # MCP客戶端
+│   ├── llm_service.py      # LLM調用服務
+│   └── memory_service.py   # 記憶管理
+└── utils/             # 工具函數
+    ├── logger.py      # 日誌工具
+    └── tools.py       # 內置工具
 ```
 
 ### 添加新功能
 
-#### 1. 添加新的内置工具
+#### 1. 添加新的內置工具
 
 在 `app/utils/tools.py` 中添加：
 
@@ -89,20 +89,20 @@ async def your_new_tool(parameter: str) -> str:
     工具描述
     
     Args:
-        parameter: 参数描述
+        parameter: 參數描述
     
     Returns:
-        工具执行结果
+        工具執行結果
     """
     try:
-        # 实现工具逻辑
+        # 實現工具邏輯
         result = do_something(parameter)
         return f"成功: {result}"
     except Exception as e:
-        logger.error(f"工具执行失败: {e}")
-        return f"错误: {str(e)}"
+        logger.error(f"工具執行失敗: {e}")
+        return f"錯誤: {str(e)}"
 
-# 在 get_available_tools() 中注册工具
+# 在 get_available_tools() 中註冊工具
 def get_available_tools():
     return {
         # ...existing tools...
@@ -114,7 +114,7 @@ def get_available_tools():
                 "properties": {
                     "parameter": {
                         "type": "string",
-                        "description": "参数描述"
+                        "description": "參數描述"
                     }
                 },
                 "required": ["parameter"]
@@ -123,9 +123,9 @@ def get_available_tools():
     }
 ```
 
-#### 2. 添加新的API端点
+#### 2. 添加新的API端點
 
-在 `app/routers/` 中创建新路由：
+在 `app/routers/` 中創建新路由：
 
 ```python
 from fastapi import APIRouter, Depends, HTTPException
@@ -139,18 +139,18 @@ async def your_endpoint(
     api_key: str = Depends(get_api_key)
 ):
     """
-    端点描述
+    端點描述
     """
     try:
-        # 实现业务逻辑
+        # 實現業務邏輯
         result = await your_service.process(request)
         return {"status": "success", "data": result}
     except Exception as e:
-        logger.error(f"处理失败: {e}")
+        logger.error(f"處理失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 ```
 
-在 `main.py` 中注册路由：
+在 `main.py` 中註冊路由：
 
 ```python
 from app.routers import your_feature
@@ -158,7 +158,7 @@ from app.routers import your_feature
 app.include_router(your_feature.router)
 ```
 
-#### 3. 配置MCP服务器
+#### 3. 配置MCP伺服器
 
 在 `data/mcp_servers.json` 中添加配置：
 
@@ -174,17 +174,17 @@ app.include_router(your_feature.router)
       },
       "enabled": true,
       "timeout": 30,
-      "description": "您的MCP服务器描述"
+      "description": "您的MCP伺服器描述"
     }
   }
 }
 ```
 
-### 测试指南
+### 測試指南
 
-#### 单元测试
+#### 單元測試
 
-创建测试文件 `tests/test_your_feature.py`：
+創建測試文件 `tests/test_your_feature.py`：
 
 ```python
 import pytest
@@ -198,14 +198,14 @@ async def test_your_function():
     assert "expected_value" in result
 
 def test_validation():
-    # 测试输入验证
+    # 測試輸入驗證
     with pytest.raises(ValueError):
         YourService().validate_input("")
 ```
 
-#### 集成测试
+#### 集成測試
 
-创建 `scripts/test_integration.py`：
+創建 `scripts/test_integration.py`：
 
 ```python
 import asyncio
@@ -226,37 +226,37 @@ if __name__ == "__main__":
     asyncio.run(test_api_endpoint())
 ```
 
-#### MCP工具测试
+#### MCP工具測試
 
 使用 `scripts/debug_mcp_tools.py`：
 
 ```python
-# 调试特定MCP工具
+# 調試特定MCP工具
 await debug_specific_tool("your_tool_name", {"param": "value"})
 ```
 
-### 调试技巧
+### 調試技巧
 
-#### 1. 启用详细日志
+#### 1. 啟用詳細日誌
 
-在 `.env` 中设置：
+在 `.env` 中設置：
 
 ```env
 LOG_LEVEL=DEBUG
 LOG_FORMAT=detailed
 ```
 
-#### 2. 使用调试脚本
+#### 2. 使用調試腳本
 
 ```bash
-# 测试MCP连接
+# 測試MCP連接
 python scripts/debug_mcp_tools.py
 
-# 测试特定服务
+# 測試特定服務
 python scripts/test_agent_service.py
 ```
 
-#### 3. API调试
+#### 3. API調試
 
 使用Swagger UI: http://localhost:8000/docs
 
@@ -267,20 +267,20 @@ curl -X POST "http://localhost:8000/api/v1/agent/run" \
   -H "X-API-KEY: your_key" \
   -H "Content-Type: application/json" \
   -d '{
-    "prompt": "测试请求",
+    "prompt": "測試請求",
     "user_id": "test_user",
     "model": "gpt-4o"
   }'
 ```
 
-## 📝 代码规范
+## 📝 代碼規範
 
-### Python代码风格
+### Python代碼風格
 
-- 使用 Black 进行代码格式化
-- 遵循 PEP 8 规范
-- 使用类型注解
-- 编写详细的文档字符串
+- 使用 Black 進行代碼格式化
+- 遵循 PEP 8 規範
+- 使用類型註解
+- 編寫詳細的文檔字符串
 
 ```python
 async def example_function(
@@ -288,27 +288,27 @@ async def example_function(
     param2: Optional[int] = None
 ) -> Dict[str, Any]:
     """
-    函数示例
+    函數示例
     
     Args:
-        param1: 必需参数描述
-        param2: 可选参数描述
+        param1: 必需參數描述
+        param2: 可選參數描述
     
     Returns:
         返回值描述
     
     Raises:
-        ValueError: 错误条件描述
+        ValueError: 錯誤條件描述
     """
     if not param1:
-        raise ValueError("param1 不能为空")
+        raise ValueError("param1 不能為空")
     
     return {"result": param1, "count": param2 or 0}
 ```
 
-### 错误处理
+### 錯誤處理
 
-使用一致的错误处理模式：
+使用一致的錯誤處理模式：
 
 ```python
 from app.utils.logger import logger
@@ -319,23 +319,23 @@ async def your_function():
         logger.info("操作成功", extra={"operation": "your_function"})
         return result
     except SpecificException as e:
-        logger.warning(f"预期错误: {e}")
+        logger.warning(f"預期錯誤: {e}")
         return {"error": "user_friendly_message"}
     except Exception as e:
-        logger.error(f"未预期错误: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="内部服务器错误")
+        logger.error(f"未預期錯誤: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="內部伺服器錯誤")
 ```
 
-### 提交规范
+### 提交規範
 
-使用语义化提交信息：
+使用語義化提交信息：
 
 ```
 feat: 添加新的搜索工具
-fix: 修复MCP连接超时问题
-docs: 更新API文档
-refactor: 重构Agent状态管理
-test: 添加工具调用测试
+fix: 修復MCP連接超時問題
+docs: 更新API文檔
+refactor: 重構Agent狀態管理
+test: 添加工具調用測試
 ```
 
 ## 🚀 部署指南
@@ -343,7 +343,7 @@ test: 添加工具调用测试
 ### Docker部署
 
 ```dockerfile
-# 使用多阶段构建
+# 使用多階段構建
 FROM python:3.11-slim as builder
 WORKDIR /app
 COPY requirements.txt .
@@ -357,19 +357,19 @@ EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-### 生产环境配置
+### 生產環境配置
 
 ```env
-# 生产环境配置
+# 生產環境配置
 NODE_ENV=production
 LOG_LEVEL=INFO
 WORKERS=4
 TIMEOUT=300
 ```
 
-### 监控设置
+### 監控設置
 
-使用健康检查端点：
+使用健康檢查端點：
 
 ```python
 @app.get("/health")
@@ -381,4 +381,4 @@ async def health_check():
     }
 ```
 
-这个开发指南提供了完整的开发工作流程，帮助新的开发者快速上手项目。
+這個開發指南提供了完整的開發工作流程，幫助新的開發者快速上手項目。

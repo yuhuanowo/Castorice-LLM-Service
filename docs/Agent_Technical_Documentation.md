@@ -1,98 +1,98 @@
-# AI Agent 技术文档
+# AI Agent 技術文檔
 
 ## 核心概念
 
-AI Agent是一个自主智能系统，能够分析用户需求，规划解决方案，使用工具执行任务，观察结果，并根据需要调整计划以完成用户的请求。我们的实现基于ReAct（Reasoning, Acting, Reflecting）架构，结合了Model Context Protocol (MCP)支持。
+AI Agent是一個自主智能系統，能夠分析用戶需求，規劃解決方案，使用工具執行任務，觀察結果，並根據需要調整計劃以完成用戶的請求。我們的實現基於ReAct（Reasoning, Acting, Reflecting）架構，結合了Model Context Protocol (MCP)支援。
 
-## 架构设计
+## 架構設計
 
-### 状态管理
+### 狀態管理
 
-Agent系统使用状态机进行工作流程管理，包含以下状态：
+Agent系統使用狀態機進行工作流程管理，包含以下狀態：
 
 ```
 IDLE → PLANNING → EXECUTING → OBSERVING → REFLECTING → RESPONDING → (完成/返回到PLANNING)
 ```
 
-每个状态对应Agent工作流程中的特定阶段：
+每個狀態對應Agent工作流程中的特定階段：
 
-- **IDLE**：初始状态，等待用户输入
-- **PLANNING**：分析用户需求，制定任务计划
-- **EXECUTING**：执行工具调用或操作
-- **OBSERVING**：分析工具执行结果
-- **REFLECTING**：评估当前进度，决定是否需要调整计划
-- **RESPONDING**：生成最终回复
-- **ERROR**：错误状态，处理异常情况
+- **IDLE**：初始狀態，等待用戶輸入
+- **PLANNING**：分析用戶需求，制定任務計劃
+- **EXECUTING**：執行工具調用或操作
+- **OBSERVING**：分析工具執行結果
+- **REFLECTING**：評估當前進度，決定是否需要調整計劃
+- **RESPONDING**：生成最終回覆
+- **ERROR**：錯誤狀態，處理異常情況
 
-### 执行模式
+### 執行模式
 
-系统支持三种执行模式：
+系統支援三種執行模式：
 
-1. **MCP模式**：使用Model Context Protocol连接外部工具服务器
-2. **ReAct模式**：基于推理、行动、反思循环的自主执行模式
-3. **简单模式**：直接调用LLM，不使用复杂的工具调用和规划流程
+1. **MCP模式**：使用Model Context Protocol連接外部工具伺服器
+2. **ReAct模式**：基於推理、行動、反思循環的自主執行模式
+3. **簡單模式**：直接調用LLM，不使用複雜的工具調用和規劃流程
 
-### 关键组件
+### 關鍵組件
 
-- **AgentService**：核心服务类，管理整个Agent的生命周期
-- **工具系统**：提供Agent可用的功能，包括搜索、图像生成等
-- **记忆系统**：管理短期和长期记忆，支持上下文理解
-- **MCP客户端**：连接外部工具服务器的接口
+- **AgentService**：核心服務類，管理整個Agent的生命週期
+- **工具系統**：提供Agent可用的功能，包括搜索、圖像生成等
+- **記憶系統**：管理短期和長期記憶，支援上下文理解
+- **MCP客戶端**：連接外部工具伺服器的接口
 
-## 关键功能
+## 關鍵功能
 
-### 1. 任务规划
+### 1. 任務規劃
 
-Agent会首先分析用户请求，然后将其分解为子任务。规划过程使用JSON结构化输出：
+Agent會首先分析用戶請求，然後將其分解為子任務。規劃過程使用JSON結構化輸出：
 
 ```json
 {
-  "taskAnalysis": "对任务的整体分析",
+  "taskAnalysis": "對任務的整體分析",
   "subtasks": [
     {
-      "id": "子任务ID",
-      "description": "子任务描述",
+      "id": "子任務ID",
+      "description": "子任務描述",
       "toolsNeeded": ["工具1", "工具2"],
-      "priority": 优先级(1-5，1最高)
+      "priority": 優先級(1-5，1最高)
     }
   ],
-  "executionOrder": ["子任务ID1", "子任务ID2", "子任务ID3"]
+  "executionOrder": ["子任務ID1", "子任務ID2", "子任務ID3"]
 }
 ```
 
-### 2. 工具执行
+### 2. 工具執行
 
-Agent能够调用多种工具完成任务，包括但不限于：
+Agent能夠調用多種工具完成任務，包括但不限於：
 
-- **搜索引擎**：获取网络信息
-- **网页内容获取**：深入分析特定网页
-- **图像生成**：创建符合描述的图像
-- **MCP工具**：使用外部工具服务器提供的功能
+- **搜索引擎**：獲取網絡信息
+- **網頁內容獲取**：深入分析特定網頁
+- **圖像生成**：創建符合描述的圖像
+- **MCP工具**：使用外部工具伺服器提供的功能
 
-### 3. 反思与调整
+### 3. 反思與調整
 
-执行过程中，Agent会定期反思当前进度，评估成功与失败的步骤，并根据需要调整计划：
+執行過程中，Agent會定期反思當前進度，評估成功與失敗的步驟，並根據需要調整計劃：
 
 ```json
 {
-  "assessment": "整体评估",
-  "failedSteps": ["步骤1", "步骤2"],
-  "adjustments": ["调整1", "调整2"],
+  "assessment": "整體評估",
+  "failedSteps": ["步驟1", "步驟2"],
+  "adjustments": ["調整1", "調整2"],
   "userInputNeeded": true/false,
-  "userQuestion": "需要询问用户的问题(如果需要)"
+  "userQuestion": "需要詢問用戶的問題(如果需要)"
 }
 ```
 
-### 4. 记忆管理
+### 4. 記憶管理
 
-Agent使用两级记忆系统：
+Agent使用兩級記憶系統：
 
-- **短期记忆**：当前对话上下文
-- **长期记忆**：用户偏好、历史交互等持久化信息
+- **短期記憶**：當前對話上下文
+- **長期記憶**：用戶偏好、歷史互動等持久化信息
 
-### 5. MCP集成
+### 5. MCP整合
 
-与Model Context Protocol的集成使Agent能够访问外部工具服务器提供的各种功能，极大扩展了Agent的能力范围。
+與Model Context Protocol的整合使Agent能夠訪問外部工具伺服器提供的各種功能，極大擴展了Agent的能力範圍。
 
 ## 使用示例
 
@@ -101,10 +101,10 @@ Agent使用两级记忆系统：
 ```python
 from app.services.agent_service import agent_service
 
-# 执行Agent请求
+# 執行Agent請求
 result = await agent_service.run(
     user_id="user123",
-    prompt="帮我找到关于人工智能最新研究的信息并生成一张相关图片",
+    prompt="幫我找到關於人工智能最新研究的信息並生成一張相關圖片",
     model_name="gpt-4o",
     enable_memory=True,
     enable_reflection=True,
@@ -112,17 +112,17 @@ result = await agent_service.run(
 )
 ```
 
-### 高级配置
+### 高級配置
 
 ```python
-# 使用自定义系统提示和工具配置
+# 使用自定義系統提示和工具配置
 result = await agent_service.run(
     user_id="user123",
-    prompt="分析这个网站的SEO情况",
+    prompt="分析這個網站的SEO情況",
     model_name="gpt-4o",
     system_prompt_override={
         "role": "system",
-        "content": "你是一个SEO专家..."
+        "content": "你是一個SEO專家..."
     },
     tools_config={
         "enable_search": True,
@@ -131,16 +131,16 @@ result = await agent_service.run(
 )
 ```
 
-## 性能与限制
+## 性能與限制
 
-- **最大步骤数**：默认限制为10个执行步骤，可通过配置调整
-- **反思阈值**：每执行3个步骤触发一次反思，可配置
-- **超时设置**：工具调用默认超时时间为30秒
+- **最大步驟數**：默認限制為10個執行步驟，可通過配置調整
+- **反思閾值**：每執行3個步驟觸發一次反思，可配置
+- **超時設置**：工具調用默認超時時間為30秒
 
-## 未来改进方向
+## 未來改進方向
 
-1. 增强Agent的元认知能力，提高自我纠错能力
-2. 改进任务分解逻辑，更精确地识别子任务
-3. 加入协作Agent支持，允许多个Agent共同解决复杂问题
-4. 优化记忆检索算法，提高上下文理解的准确性
-5. 扩展工具系统，支持更多种类的操作
+1. 增強Agent的元認知能力，提高自我糾錯能力
+2. 改進任務分解邏輯，更精確地識別子任務
+3. 加入協作Agent支援，允許多個Agent共同解決複雜問題
+4. 優化記憶檢索算法，提高上下文理解的準確性
+5. 擴展工具系統，支援更多種類的操作

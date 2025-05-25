@@ -123,7 +123,8 @@ class LLMService:
                 "isExceeded": usage_count > limit
             }
         except Exception as e:
-            logger.error(f"更新使用量错误: {str(e)}")            # 失败时返回基本信息
+            logger.error(f"更新使用量错误: {str(e)}")            
+            # 失败时返回基本信息
             limit = settings.MODEL_USAGE_LIMITS.get(model_name, 0)
             return {
                 "selectedModel": model_name,

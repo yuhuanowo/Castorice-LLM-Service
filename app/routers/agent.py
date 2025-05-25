@@ -11,6 +11,7 @@ from app.core.config import Settings
 from app.services.agent_service import agent_service
 from app.models.mongodb import create_chat_log, get_user_memory
 from app.utils.logger import logger
+from app.services.llm_service import llm_service  # 添加导入llm_service
 
 # 创建Agent路由
 router = APIRouter()
@@ -57,7 +58,8 @@ class AgentResponse(BaseModel):
     meta: Optional[Dict[str, Any]] = None  # 用于MCP模式的额外元数据
 
 
-@router.post("/agent", response_model=AgentResponse, tags=["agent"])
+@router.post("", response_model=AgentResponse, tags=["agent"])
+@router.post("/", response_model=AgentResponse, tags=["agent"])
 async def run_unified_agent(
     request: UnifiedAgentRequest = Body(...),
     settings: Settings = Depends(get_settings_dependency),
@@ -101,6 +103,42 @@ async def run_unified_agent(
                 detail=f"不支持的模型: {request.model_name}"
             )
             
+        # 检查用户使用限制，但不增加使用次数
+        try:
+            # 从JSON文件中获取当前使用量
+            with open(llm_service.usage_path, "r") as f:
+                user_usage = json.load(f)
+            
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            
+            # 如果是新的一天，不需要检查限制
+            if user_usage.get("date") != current_date:
+                pass
+            else:
+                # 获取当前使用量
+                usage_count = 0
+                if request.user_id in user_usage and request.model_name in user_usage[request.user_id]:
+                    usage_count = user_usage[request.user_id][request.model_name]
+                
+                # 获取模型限制
+                limit = settings.MODEL_USAGE_LIMITS.get(request.model_name, 0)
+                
+                # 检查如果增加1次后是否会超过限制
+                if usage_count + 1 > limit:
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail=f"今日模型 {request.model_name} 使用量已达上限 ({limit})"
+                    )
+        except FileNotFoundError:
+            # 如果文件不存在，则无需检查限制
+            pass
+        except json.JSONDecodeError:
+            logger.error("使用量JSON解析错误")
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise e
+            logger.error(f"检查使用量错误: {str(e)}")
+        
         # 验证MCP支持（如果启用）
         if request.enable_mcp:
             if request.model_name not in settings.MCP_SUPPORTED_MODELS:
