@@ -19,7 +19,15 @@ router = APIRouter()
 
 # 统一Agent请求模型
 class UnifiedAgentRequest(BaseModel):
-    """Agent请求模型"""
+    """
+    Agent请求模型
+    
+    支持两种主要模式：
+    1. ReAct模式 (enable_react_mode=True) - 完整的推理、行动、反思循环
+    2. 简单模式 (enable_react_mode=False) - 基础的工具调用模式
+    
+    每种模式都可以选择性启用MCP功能 (enable_mcp=True/False)
+    """
     prompt: str
     user_id: str
     model_name: str = "gpt-4o-mini"
@@ -46,7 +54,20 @@ class UnifiedAgentRequest(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    """Agent响应模型"""
+    """
+    Agent响应模型
+    
+    包含不同模式下返回的各种信息：
+    - success: 执行是否成功
+    - interaction_id: 交互ID，用于关联请求和响应
+    - response: 模型的原始响应
+    - execution_trace: 执行跟踪（包含状态变化、工具调用等）
+    - reasoning_steps: 推理步骤（在ReAct模式下包含思考、行动、反思等）
+    - execution_time: 执行时间（秒）
+    - steps_taken: 执行的步骤数
+    - generated_image: 可能生成的图片（如果有）
+    - meta: 元数据（可能包含MCP相关信息）
+    """
     success: bool
     interaction_id: str
     response: Dict[str, Any]
@@ -55,7 +76,7 @@ class AgentResponse(BaseModel):
     execution_time: float
     steps_taken: int
     generated_image: Optional[str] = None
-    meta: Optional[Dict[str, Any]] = None  # 用于MCP模式的额外元数据
+    meta: Optional[Dict[str, Any]] = None  # 用于MCP功能的额外元数据
 
 
 @router.post("", response_model=AgentResponse, tags=["agent"])
@@ -66,7 +87,7 @@ async def run_unified_agent(
     api_key: str = Depends(get_api_key),
 ):
     """
-    统一的Agent接口 - 支持普通模式、高级模式和MCP模式
+    统一的Agent接口 - 支持两种主要模式：ReAct模式和简单模式，每种模式都可以选择性启用MCP功能
     
     - **prompt**: 用户提示或查询
     - **user_id**: 用户ID
@@ -74,9 +95,9 @@ async def run_unified_agent(
     
     基本功能开关:
     - **enable_memory**: 是否启用记忆功能
-    - **enable_reflection**: 是否启用反思能力
+    - **enable_reflection**: 是否启用反思能力（仅在ReAct模式下有效）
     - **enable_react_mode**: 是否使用ReAct模式（思考-行动-观察）
-    - **enable_mcp**: 是否启用MCP协议
+    - **enable_mcp**: 是否启用MCP功能（可在任何模式下使用）
     
     高级选项:
     - **max_steps**: 可选的最大步骤数限制
@@ -89,12 +110,12 @@ async def run_unified_agent(
     - **audio**: 可选的音频输入（base64编码）
     
     MCP特定字段:
-    - **environment_info**: 环境信息（MCP模式）
-    - **document_chunks**: 文档块列表（MCP模式）
+    - **environment_info**: 环境信息（启用MCP时使用）
+    - **document_chunks**: 文档块列表（启用MCP时使用）
     """
     try:
         logger.info(f"收到Agent请求，用户: {request.user_id}, 模型: {request.model_name}, " +
-                   f"模式: {'MCP' if request.enable_mcp else ('ReAct' if request.enable_react_mode else '标准')}")
+                   f"模式: {'ReAct' if request.enable_react_mode else '简单'}, MCP功能: {'启用' if request.enable_mcp else '禁用'}")
         
         # 验证模型
         if request.model_name not in settings.ALLOWED_GITHUB_MODELS + settings.ALLOWED_GEMINI_MODELS:
@@ -138,21 +159,19 @@ async def run_unified_agent(
             if isinstance(e, HTTPException):
                 raise e
             logger.error(f"检查使用量错误: {str(e)}")
-        
-        # 验证MCP支持（如果启用）
+          # 验证MCP支持（如果启用）
         if request.enable_mcp:
             if request.model_name not in settings.MCP_SUPPORTED_MODELS:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"模型 {request.model_name} 不支持MCP协议"
+                    detail=f"模型 {request.model_name} 不支持MCP功能"
                 )
             
-            # TODO: MCP协议实现逻辑
-            # 由于您要求暂时不支持MCP，所以暂不实现
+            # 检查MCP功能是否启用
             if settings.MCP_SUPPORT_ENABLED is False:
                 raise HTTPException(
                     status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                    detail="MCP协议支持尚未启用，请在配置中启用"
+                    detail="MCP功能支持尚未启用，请在配置中启用"
                 )
         
         # 检查工具支持

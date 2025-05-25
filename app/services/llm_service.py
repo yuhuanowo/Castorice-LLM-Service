@@ -765,7 +765,7 @@ class LLMService:
                 
         return user_message
 
-    # MARK: 发送LLM请求
+    # MARK: 发送LLM请求    
     async def send_llm_request(
         self,
         messages: List[Dict[str, Any]],
@@ -783,6 +783,27 @@ class LLMService:
         Returns:
             API响应结果
         """
+        # 检查消息内容长度，避免token爆炸
+        try:
+            from app.utils.tools import ensure_content_length
+            
+            # 处理用户消息中的内容
+            for i, message in enumerate(messages):
+                if message.get("role") == "user" and "content" in message and isinstance(message["content"], str):
+                    # 对用户消息内容进行长度管理
+                    original_length = len(message["content"])
+                    message["content"] = await ensure_content_length(
+                        content=message["content"],
+                        max_tokens=6000,
+                        context_description="用户消息"
+                    )
+                    
+                    # 如果内容被修改，记录日志
+                    if len(message["content"]) < original_length:
+                        logger.info(f"用户消息已优化，原长度: {original_length}, 优化后: {len(message['content'])}")
+        except Exception as e:
+            logger.warning(f"消息长度管理失败，继续使用原始消息: {str(e)}")
+        
         # 确定模型提供商
         provider = self._get_model_provider(model_name)
         
@@ -1500,7 +1521,7 @@ class LLMService:
                             "content": json.dumps({"success": False, "error": f"MCP工具调用失败: {str(e)}"})
                         })
                 
-                # 不支持的工具
+                  # 不支持的工具
                 else:
                     tool_results.append({
                         "tool_call_id": tool_call.get("id", ""),

@@ -225,6 +225,40 @@ async def fetch_webpage_content(url: str) -> Optional[str]:
             max_length = 5000  # 设置合理的截断长度
             if len(text) > max_length:
                 text = text[:max_length] + "...[内容已截断]"
+            
+            # 使用Gemma-3模型提取重点内容，减少token消耗
+            try:
+                from app.services.llm_service import llm_service
+                
+                # 根据内容长度决定是否需要提取重点
+                if len(text) > 1000:  # 对于较长的内容才进行处理
+                    logger.info(f"使用Gemma-3模型提取网页内容重点")
+                    
+                    messages = [
+                        {
+                            "role": "system",
+                            "content": "请提取以下网页内容的核心要点和关键信息。保留最重要的事实、数据和观点，去除冗余内容。输出应简洁且包含原文的主要信息。"
+                        },
+                        {
+                            "role": "user",
+                            "content": text
+                        }
+                    ]
+                    
+                    # 使用较小的模型进行处理
+                    model_name = "gemma-3n-e4b-it"
+                    summary_response = await llm_service.send_llm_request(messages, model_name)
+                    
+                    if "choices" in summary_response and summary_response["choices"]:
+                        summarized_text = summary_response["choices"][0]["message"].get("content", "")
+                        
+                        # 确保摘要不为空且有意义
+                        if summarized_text and len(summarized_text) > 100:
+                            logger.info(f"成功提取网页内容重点，原长度: {len(text)}, 提取后长度: {len(summarized_text)}")
+                            return f"[以下是网页内容的重点提取]\n\n{summarized_text}\n\n[原始URL: {url}]"
+            except Exception as e:
+                logger.warning(f"使用模型提取网页内容重点失败: {str(e)}，将返回原始内容")
+                # 提取失败时继续使用原始内容
                 
             return text
     except Exception as e:
@@ -1125,3 +1159,74 @@ async def generate_code(
             "success": False,
             "error": str(e)
         }
+        
+# MARK: 内容长度管理
+async def ensure_content_length(content: str, max_tokens: int = 6000, context_description: str = "内容") -> str:
+    """
+    确保内容长度不超过LLM处理的token限制，如果超过则使用Gemma-3模型进行内容整理
+    
+    Args:
+        content: 原始内容
+        max_tokens: 最大允许的token数量(近似值，按平均每个token 4个字符计算)
+        context_description: 内容的描述，用于日志记录
+        
+    Returns:
+        处理后的内容，确保不会超过token限制
+    """
+    try:
+        # 粗略估计token数量（中文和英文字符的token计算有差异，这里用字符数/4作为近似）
+        estimated_tokens = len(content) / 2
+        
+        # 如果估计的token数量超过限制，使用Gemma-3进行内容整理
+        if estimated_tokens > max_tokens:
+            logger.info(f"{context_description}估计token数({int(estimated_tokens)})超过限制({max_tokens})，进行内容整理")
+            
+            try:
+                from app.services.llm_service import llm_service
+                
+                # 截断过长的输入，避免Gemma-3也超出限制
+                max_input_chars = 120000  # Gemma-3的输入限制也要考虑
+                truncated_content = content
+                if len(content) > max_input_chars:
+                    truncated_content = content[:max_input_chars] + "...[内容已截断]"
+                
+                # 构建提示词
+                messages = [
+                    {
+                        "role": "system",
+                        "content": f"请提取以下{context_description}的核心要点和关键信息。保留最重要的事实、数据和观点，去除冗余内容。输出需精简，但必须保留原文的关键信息。目标是将内容精简到原来的1/3左右。"
+                    },
+                    {
+                        "role": "user",
+                        "content": truncated_content
+                    }
+                ]
+                
+                # 使用较小的模型进行内容整理
+                model_name = "gemma-3n-e4b-it"
+                response = await llm_service.send_llm_request(messages, model_name)
+                
+                if "choices" in response and response["choices"]:
+                    summarized_content = response["choices"][0]["message"].get("content", "")
+                    
+                    # 确保整理后的内容有意义
+                    if summarized_content and len(summarized_content) > 100:
+                        logger.info(f"成功整理{context_description}，原长度: {len(content)}字符，整理后: {len(summarized_content)}字符")
+                        return f"[以下是经过整理的{context_description}]\n\n{summarized_content}\n\n[原内容长度: {len(content)}字符]"
+                    
+                logger.warning(f"内容整理结果无效，将尝试简单截断")
+            except Exception as e:
+                logger.error(f"使用模型整理内容时出错: {str(e)}")
+            
+            # 如果整理失败，进行简单截断
+            max_safe_chars = max_tokens * 4
+            truncated = content[:max_safe_chars] + f"\n\n...[{context_description}已截断，原长度: {len(content)}字符]"
+            logger.info(f"已截断{context_description}至{len(truncated)}字符")
+            return truncated
+        
+        # 内容长度在限制范围内，直接返回原内容
+        return content
+    except Exception as e:
+        logger.error(f"内容长度管理出错: {str(e)}")
+        # 出错时进行安全截断
+        return content[:6000] + "...[内容已安全截断]"
