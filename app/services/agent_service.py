@@ -61,101 +61,11 @@ class AgentService:
     
     每种模式都可以选择性启用MCP（Model Context Protocol）功能
     """
-    
     def __init__(self):
         # 基础配置
         self.max_steps = settings.AGENT_MAX_STEPS
         self.reflection_threshold = settings.AGENT_REFLECTION_THRESHOLD
         self.confidence_threshold = settings.AGENT_CONFIDENCE_THRESHOLD
-        
-        # 系统预设的计划模板
-        self.planning_template = """
-        你是一个智能Agent，需要逐步思考并解决问题。
-        
-        1. 首先分析用户的请求，确定这是一个什么样的任务
-        2. 将任务分解成更小的子任务
-        3. 按照优先级排序子任务
-        4. 制定执行计划，明确每个步骤需要使用的工具
-        
-        请输出一个JSON格式的计划:
-        {
-          "taskAnalysis": "对任务的整体分析",
-          "subtasks": [
-            {
-              "id": "子任务ID",
-              "description": "子任务描述",
-              "toolsNeeded": ["工具1", "工具2"],
-              "priority": 优先级(1-5，1最高)
-            }
-          ],
-          "executionOrder": ["子任务ID1", "子任务ID2", "子任务ID3"]
-        }
-        """
-        
-        # 系统提示的反思模板
-        self.reflection_template = """
-        请回顾你目前执行的步骤，特别关注以下几点:
-        
-        1. 是否有步骤执行失败？为什么？
-        2. 有没有更有效的方法来解决当前问题？
-        3. 是否需要调整计划？
-        4. 信息是否足够完整？是否需要向用户询问更多信息？
-        
-        请输出一个JSON格式的反思:
-        {
-          "assessment": "整体评估",
-          "failedSteps": ["步骤1", "步骤2"],
-          "adjustments": ["调整1", "调整2"],
-          "userInputNeeded": true/false,
-          "userQuestion": "需要询问用户的问题(如果需要)"
-        }
-        """
-        
-        # ReAct系统提示模板        
-        self.react_system_prompt = """
-        你是一个先进的自主Agent，基于ReAct（推理、行动、观察）架构运作。你的目标是通过以下循环完成复杂任务：
-        
-        1. **思考(Thinking)**：分析当前情况、制定详细的子步骤计划
-        2. **行动(Acting)**：使用可用工具完成具体子任务
-        3. **观察(Observing)**：分析工具执行结果
-        4. **反思(Reflecting)**：定期反思进度、调整计划
-        
-        与用户互动时，遵循以下原则：
-        - 先理解任务全貌，再分解为清晰步骤
-        - 只在需要时使用工具（不要创建不必要的步骤）
-        - 在工具使用之间进行推理，形成连贯的解决方案
-        - 失败后能自动尝试替代方案
-        - 保持透明，清晰地解释你的推理过程
-        
-        工具使用的最佳实践：
-        - 使用searchDuckDuckGo时，先浏览所有搜索结果摘要
-        - 不要自动对每个搜索结果URL调用fetchWebpageContent
-        - 仅当真正需要特定网页的详细内容时，才对1-2个最相关的URL使用fetchWebpageContent
-        - 这种方法可以大大减少token消耗，提高效率
-        
-        你可以访问用户的短期和长期记忆，合理使用它们来维持上下文和记住用户偏好。
-        """
-        
-        # MCP支持的系统提示模板        
-        self.mcp_system_prompt = """
-        你是一个支持Model Context Protocol (MCP)的智能代理。
-        你可以理解用户的请求，分解成子任务，并利用工具来解决问题。
-        请按照以下格式处理请求：
-
-        1. 理解用户意图
-        2. 计划执行步骤
-        3. 按照计划逐步执行
-        4. 必要时请求更多信息
-        5. 提供清晰的回复
-        
-        工具使用的重要指导原则：
-        - 使用searchDuckDuckGo搜索时，先审视搜索结果摘要以获取概览
-        - 不要为每个搜索结果URL都调用fetchWebpageContent
-        - 仅当特定任务需要深入理解网页内容时，才针对性地选择1-2个最相关的URL使用fetchWebpageContent
-        - 这种有选择性的工具使用可以减少token消耗，提高处理效率
-        
-        你可以使用多种工具来完成任务，包括：搜索引擎、图像生成、代码执行等。
-        """
     async def run(
         self, 
         user_id: str, 
@@ -341,7 +251,7 @@ class AgentService:
                 "execution_trace": execution_trace,
                 "execution_time": execution_time,
                 "steps_taken": steps_taken
-            }
+            }    
     def _get_system_prompt(self, enable_mcp: bool, enable_react_mode: bool = True) -> Dict[str, str]:
         """
         获取系统提示 - 根据模式选择合适的系统提示
@@ -357,47 +267,15 @@ class AgentService:
             # ReAct模式
             if enable_mcp:
                 # ReAct模式 + MCP功能
-                # 创建一个融合的系统提示
-                combined_prompt = f"""
-                你是一个先进的自主Agent，基于ReAct（推理、行动、观察）架构运作，并支持Model Context Protocol (MCP)。
-                
-                作为一个ReAct Agent，你通过以下循环完成复杂任务：
-                1. **思考(Thinking)**：分析当前情况、制定详细的子步骤计划
-                2. **行动(Acting)**：使用可用工具完成具体子任务
-                3. **观察(Observing)**：分析工具执行结果
-                4. **反思(Reflecting)**：定期反思进度、调整计划
-                
-                作为一个支持MCP的Agent，你可以访问更丰富的外部工具集，并遵循：
-                1. 理解用户意图
-                2. 计划执行步骤
-                3. 按照计划逐步执行
-                4. 必要时请求更多信息
-                5. 提供清晰的回复
-                
-                与用户互动时，遵循以下原则：
-                - 先理解任务全貌，再分解为清晰步骤
-                - 只在需要时使用工具（不要创建不必要的步骤）
-                - 在工具使用之间进行推理，形成连贯的解决方案
-                - 失败后能自动尝试替代方案
-                - 保持透明，清晰地解释你的推理过程
-                
-                工具使用的最佳实践：
-                - 使用searchDuckDuckGo时，先浏览所有搜索结果摘要
-                - 不要自动对每个搜索结果URL调用fetchWebpageContent
-                - 仅当真正需要特定网页的详细内容时，才对1-2个最相关的URL使用fetchWebpageContent
-                - 这种方法可以大大减少token消耗，提高效率
-                
-                你可以访问用户的短期和长期记忆，合理使用它们来维持上下文和记住用户偏好。
-                """
                 return {
                     "role": "system",
-                    "content": combined_prompt
+                    "content": settings.PROMPT_REACT_MCP_COMBINED
                 }
             else:
                 # 纯ReAct模式
                 return {
                     "role": "system",
-                    "content": self.react_system_prompt
+                    "content": settings.PROMPT_REACT_SYSTEM
                 }
         else:
             # 简单模式
@@ -405,13 +283,13 @@ class AgentService:
                 # 简单模式 + MCP功能
                 return {
                     "role": "system",
-                    "content": self.mcp_system_prompt
+                    "content": settings.PROMPT_MCP_SYSTEM
                 }
             else:
                 # 纯简单模式
                 return {
                     "role": "system",
-                    "content": "你是一个智能助手，能够理解用户的请求并给出清晰的回答。在需要时，你可以使用工具来完成任务。\n\n工具使用指南：\n- 使用searchDuckDuckGo搜索时，先分析搜索结果摘要获取基本信息\n- 不要对每个搜索结果都使用fetchWebpageContent\n- 仅当任务确实需要深入理解某个特定网页内容时，才对1-2个最相关的URL使用fetchWebpageContent\n- 这种有选择性的工具使用方式可以减少token使用量，提高效率"
+                    "content": settings.PROMPT_SIMPLE_SYSTEM
                 }
             # 不再需要单独的MCP模式，MCP功能已集成到其他模式中
 
@@ -488,12 +366,11 @@ class AgentService:
             "state": current_state.value,
             "action": "开始规划任务"
         })
-        
-        # ReAct模式规划提示词
+          # ReAct模式规划提示词
         planning_message = {
             "role": "user",
-            "content": "请分析任务并制定解决方案。在回答中，首先思考任务的性质，然后制定具体步骤，最后确定需要使用的工具。"
-        }     
+            "content": settings.PROMPT_PLANNING_MESSAGE
+        }
 
         # 深拷贝messages以避免修改原始消息
         planning_messages = messages.copy()
@@ -662,12 +539,11 @@ class AgentService:
                         "state": current_state.value,
                         "action": f"开始反思 #{reflection_steps}"
                     })
-                    
-                    # 添加反思提示
+                      # 添加反思提示
                     reflection_prompt = {
                         "role": "user",
-                        "content": "请反思目前的执行情况。评估进展、遇到的问题和可能的改进方向。确定是否需要调整计划或收集更多信息。"
-                    }                      
+                        "content": settings.PROMPT_REFLECTION_MESSAGE
+                    }
                     messages.append(reflection_prompt)
 
                     try:
@@ -738,12 +614,11 @@ class AgentService:
                 "state": AgentState.RESPONDING.value,
                 "action": "达到最大步骤数，生成总结响应"
             })
-            
-            # 添加总结提示
+              # 添加总结提示
             summary_prompt = {
                 "role": "user",
-                "content": "已达到最大执行步骤数。请总结目前的执行情况、已完成的任务和未完成的部分。"                  
-                }
+                "content": settings.PROMPT_SUMMARY_MESSAGE
+            }
             messages.append(summary_prompt)
             
             try:
