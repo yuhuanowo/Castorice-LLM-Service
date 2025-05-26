@@ -1054,6 +1054,48 @@ class LLMService:
                         logger.info("尝试使用更宽松的安全设置重新请求")
                         # 配置更宽松的安全设置
                         safer_config = config
+                        
+                        # 添加安全设置，降低阈值
+                        if GEMINI_AVAILABLE and hasattr(types, 'HarmCategory') and hasattr(types, 'HarmBlockThreshold'):
+                            safer_config.safety_settings = [
+                                {
+                                    "category": types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                                    "threshold": types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+                                },
+                                {
+                                    "category": types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                                    "threshold": types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+                                },
+                                {
+                                    "category": types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                                    "threshold": types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+                                },
+                                {
+                                    "category": types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                                    "threshold": types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+                                }
+                            ]
+                        else:
+                            # 兼容旧版API或导入失败的情况
+                            safer_config.safety_settings = [
+                                {
+                                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                                    "threshold": "BLOCK_ONLY_HIGH"
+                                },
+                                {
+                                    "category": "HARM_CATEGORY_HATE_SPEECH",
+                                    "threshold": "BLOCK_ONLY_HIGH"
+                                },
+                                {
+                                    "category": "HARM_CATEGORY_HARASSMENT",
+                                    "threshold": "BLOCK_ONLY_HIGH"
+                                },
+                                {
+                                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                                    "threshold": "BLOCK_ONLY_HIGH"
+                                }
+                            ]
+                            
                         return self.gemini_client.models.generate_content(
                             model=model_name,
                             contents=contents,

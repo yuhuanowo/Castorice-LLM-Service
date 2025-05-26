@@ -893,7 +893,7 @@ class Settings(BaseSettings):
     # MCP协议配置
     MCP_VERSION: str = "0.1.0"  # MCP协议版本
     MCP_MAX_CONTEXT_TOKENS: int = 16000  # MCP最大上下文长度
-    MCP_SUPPORTED_MODELS: list = ["gpt-4o", "gpt-4o-mini", "o1", "DeepSeek-V3-0324", "gpt-4.1-mini", "gemini-1.5-pro", "Cohere-command-r-plus-08-2024", "Mistral-Nemo", "Mistral-Large-2411", "gemini-2.0-flash"]# 支持MCP的模型列表
+    MCP_SUPPORTED_MODELS: list = ["gpt-4o", "gpt-4o-mini", "o1", "DeepSeek-V3-0324", "gpt-4.1-mini", "gemini-1.5-pro", "Cohere-command-r-plus-08-2024", "Mistral-Nemo", "Mistral-Large-2411", "gemini-2.0-flash", "gemini-2.5-flash-preview-05-20"]# 支持MCP的模型列表
     MCP_SUPPORT_ENABLED: bool = True  # 是否启用MCP协议支持
     
     # 数据库配置

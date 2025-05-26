@@ -15,9 +15,8 @@ starlette
 jinja2
 azure-ai-inference
 google-genai
-markdown
-pytest
-pytest-asyncio
+ivgoogle-genai
+ytest-asyncio
 pytest-cov
 asynctest
 aiosignal
