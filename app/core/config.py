@@ -890,10 +890,10 @@ class Settings(BaseSettings):
     PROMPT_MEMORY_TEMPLATE_BEGIN: str = PromptTemplates.Memory.TEMPLATE_BEGIN
     PROMPT_MEMORY_TEMPLATE_JSON: str = PromptTemplates.Memory.TEMPLATE_JSON
     
-    # MCP协议配置
+      # MCP协议配置
     MCP_VERSION: str = "0.1.0"  # MCP协议版本
     MCP_MAX_CONTEXT_TOKENS: int = 16000  # MCP最大上下文长度
-    MCP_SUPPORTED_MODELS: list = ["gpt-4o", "gpt-4o-mini", "o1", "DeepSeek-V3-0324", "gpt-4.1-mini", "gemini-1.5-pro", "Cohere-command-r-plus-08-2024", "Mistral-Nemo", "Mistral-Large-2411", "gemini-2.0-flash", "gemini-2.5-flash-preview-05-20"]# 支持MCP的模型列表
+    MCP_SUPPORTED_MODELS: list = ["gpt-4o", "gpt-4o-mini", "o1", "DeepSeek-V3-0324", "gpt-4.1-mini", "gemini-1.5-pro", "Cohere-command-r-plus-08-2024", "Mistral-Nemo", "Mistral-Large-2411", "gemini-2.0-flash", "gemini-2.5-flash-preview-05-20", "qwen3:8b"]# 支持MCP的模型列表
     MCP_SUPPORT_ENABLED: bool = True  # 是否启用MCP协议支持
     
     # 数据库配置
@@ -909,8 +909,13 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_DEFAULT_MODEL: str = os.getenv("GEMINI_DEFAULT_MODEL", "gemini-2.0-flash")
     
-    # GitHub Token (用于 GitHub 的模型调用)
+      # GitHub Token (用于 GitHub 的模型调用)
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
+    
+    # Ollama API配置
+    OLLAMA_ENDPOINT: str = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
+    OLLAMA_API_KEY: str = os.getenv("OLLAMA_API_KEY", "")  # Ollama 通常不需要 API Key，但留作扩展
+    OLLAMA_DEFAULT_MODEL: str = os.getenv("OLLAMA_DEFAULT_MODEL", "qwen2.5:7b")
     
     # 工具配置
     CLOUDFLARE_API_KEY: str = os.getenv("CLOUDFLARE_API_KEY", "")
@@ -939,8 +944,7 @@ class Settings(BaseSettings):
         "MAI-DS-R1", "Phi-3.5-MoE-instruct", "Phi-3.5-vision-instruct", "Phi-4", "Phi-4-multimodal-instruct", "Phi-4-reasoning", "mistral-medium-2505", 
     
     ]
-    
-    # Gemini模型列表
+      # Gemini模型列表
     ALLOWED_GEMINI_MODELS: list = [
         "gemini-2.5-flash-preview-05-20",
         "gemini-2.0-flash",
@@ -950,6 +954,12 @@ class Settings(BaseSettings):
         "gemma-3-27b-it",
         "gemma-3n-e4b-it",
         
+    ]
+    
+    # Ollama模型列表
+    ALLOWED_OLLAMA_MODELS: list = [
+        # Qwen系列
+        "qwen3:8b"
     ]
     
     # 模型使用限制
@@ -1036,6 +1046,9 @@ class Settings(BaseSettings):
         "gemini-1.5-flash": 750,
         "gemma-3-27b-it": 7200,
         "gemma-3n-e4b-it": 7200,
+
+        # Ollama
+        "qwen3:8b": 9999
     
     }
     

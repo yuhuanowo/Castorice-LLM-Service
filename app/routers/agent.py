@@ -118,7 +118,7 @@ async def run_unified_agent(
                    f"模式: {'ReAct' if request.enable_react_mode else '简单'}, MCP功能: {'启用' if request.enable_mcp else '禁用'}")
         
         # 验证模型
-        if request.model_name not in settings.ALLOWED_GITHUB_MODELS + settings.ALLOWED_GEMINI_MODELS:
+        if request.model_name not in settings.ALLOWED_GITHUB_MODELS + settings.ALLOWED_GEMINI_MODELS + settings.ALLOWED_OLLAMA_MODELS:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"不支持的模型: {request.model_name}"

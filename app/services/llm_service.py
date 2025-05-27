@@ -29,6 +29,7 @@ class ModelProvider(Enum):
     """模型提供商枚举类"""
     GITHUB = "github"
     GEMINI = "gemini"
+    OLLAMA = "ollama"
 
 
 class LLMService:
@@ -54,6 +55,11 @@ class LLMService:
         else:
             self.gemini_client = None
             logger.warning("未安装google-genai库，无法使用Gemini模型")
+        
+        # Ollama API设置
+        self.ollama_endpoint = settings.OLLAMA_ENDPOINT
+        self.ollama_api_key = settings.OLLAMA_API_KEY
+        self.ollama_default_model = settings.OLLAMA_DEFAULT_MODEL
         
         # 存储最近生成的图片
         self.last_generated_image = None
@@ -691,6 +697,8 @@ class LLMService:
         """
         if model_name in settings.ALLOWED_GEMINI_MODELS:
             return ModelProvider.GEMINI
+        elif model_name in settings.ALLOWED_OLLAMA_MODELS:
+            return ModelProvider.OLLAMA
         else:  # 默认为GitHub模型
             return ModelProvider.GITHUB
 
@@ -802,10 +810,11 @@ class LLMService:
         
         # 确定模型提供商
         provider = self._get_model_provider(model_name)
-        
-        # 根据提供商调用相应的请求方法
+          # 根据提供商调用相应的请求方法
         if provider == ModelProvider.GEMINI:
             return await self._send_gemini_request(messages, model_name, tools)
+        elif provider == ModelProvider.OLLAMA:
+            return await self._send_ollama_request(messages, model_name, tools)
         else:  # 默认使用GitHub模型
             return await self._send_github_request(messages, model_name, tools)
 
@@ -1005,7 +1014,8 @@ class LLMService:
                     "type": "function",
                     "function": {
                         "name": function_call["name"],
-                        "arguments": json.dumps(function_call["arguments"])
+                        "arguments": json.dumps(function_call["arguments"]) 
+                        if isinstance(function_call["arguments"], dict) else function_call["arguments"]
                     }
                 }]
             
@@ -1145,6 +1155,118 @@ class LLMService:
             logger.error(f"获取Gemini响应时出错: {str(e)}")
             return f"Gemini响应错误: {str(e)}"
 
+    # MARK: 发送Ollama模型请求
+    async def _send_ollama_request(
+        self,
+        messages: List[Dict[str, Any]],
+        model_name: str,
+        tools: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """
+        发送Ollama模型请求
+        
+        Args:
+            messages: 消息列表
+            model_name: 模型名称
+            tools: 可选的工具定义
+            
+        Returns:
+            格式化后的API响应结果，使其与其他模型响应格式一致
+        """
+        try:
+            # 构建请求URL
+            url = f"{self.ollama_endpoint}/api/chat"
+            
+            # 构建请求头
+            headers = {
+                "Content-Type": "application/json"
+            }
+            
+            # 如果设置了API密钥，则添加认证头
+            if self.ollama_api_key:
+                headers["Authorization"] = f"Bearer {self.ollama_api_key}"
+            
+            # 构建请求体
+            body = {
+                "model": model_name,
+                "messages": messages,
+                "stream": False  # 我们使用非流式响应以保持与其他提供商的一致性
+            }
+            
+            # 如果有工具定义，将其添加到请求中
+            # Ollama支持OpenAI兼容的工具调用格式
+            if tools and model_name not in [m.lower() for m in settings.UNSUPPORTED_TOOL_MODELS]:
+                body["tools"] = tools
+                # 强制模型使用工具（如果可用）
+                # body["tool_choice"] = "auto"  # 可选：让模型自动决定是否使用工具
+            
+            # 发送请求到Ollama
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=body,
+                    timeout=300.0  # 增加超时时间，本地模型可能需要更长时间
+                )
+                
+                # 处理错误响应
+                if response.status_code != 200:
+                    logger.error(f"Ollama API错误 {response.status_code}: {response.text}")
+                    return {"error": f"Ollama API错误 {response.status_code}", "detail": response.text}
+                
+                # 解析响应
+                ollama_response = response.json()
+                
+                # 将Ollama响应格式转换为标准格式
+                # Ollama的响应格式类似：
+                # {
+                #   "model": "qwen2.5:7b",
+                #   "created_at": "2023-12-07T09:32:69.123456Z",
+                #   "message": {
+                #     "role": "assistant",
+                #     "content": "Hello! How can I help you today?"
+                #   },
+                #   "done": true
+                # }
+                
+                # 转换为OpenAI兼容格式
+                formatted_response = {
+                    "choices": [{
+                        "index": 0,
+                        "message": {
+                            "role": ollama_response.get("message", {}).get("role", "assistant"),
+                            "content": ollama_response.get("message", {}).get("content", ""),
+                        },
+                        "finish_reason": "stop" if ollama_response.get("done", False) else "length"
+                    }],
+                    "model": ollama_response.get("model", model_name),
+                    "usage": {
+                        # Ollama通常不提供详细的使用量信息，我们提供估算值
+                        "prompt_tokens": ollama_response.get("prompt_eval_count", 0),
+                        "completion_tokens": ollama_response.get("eval_count", 0),
+                        "total_tokens": ollama_response.get("prompt_eval_count", 0) + ollama_response.get("eval_count", 0)
+                    }
+                }
+                
+                # 处理工具调用
+                message = ollama_response.get("message", {})
+                if "tool_calls" in message and message["tool_calls"]:
+                    formatted_response["choices"][0]["message"]["tool_calls"] = message["tool_calls"]
+                    formatted_response["choices"][0]["finish_reason"] = "tool_calls"
+                
+                logger.info(f"Ollama请求成功，模型: {model_name}, 响应长度: {len(formatted_response['choices'][0]['message'].get('content', ''))}")
+                return formatted_response
+                
+        except httpx.ConnectError as e:
+            logger.error(f"无法连接到Ollama服务器 {self.ollama_endpoint}: {str(e)}")
+            return {"error": "连接Ollama服务器失败", "detail": f"请确保Ollama服务正在 {self.ollama_endpoint} 运行"}
+        except httpx.TimeoutException as e:
+            logger.error(f"Ollama请求超时: {str(e)}")
+            return {"error": "Ollama请求超时", "detail": "请求处理时间过长，请稍后重试"}
+        except Exception as e:
+            logger.error(f"Ollama请求错误: {str(e)}")
+            return {"error": "Ollama请求错误", "detail": str(e)}
+
     # MARK: 处理工具调用
     async def handle_tool_call(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -1187,10 +1309,15 @@ class LLMService:
             function_call = tool_call.get("function", {})
             name = function_call.get("name", "")
             arguments_str = function_call.get("arguments", "{}")
-            
             try:
-                # 解析参数
-                arguments = json.loads(arguments_str)
+                # 解析参数 - 如果已经是dict就直接使用，如果是字符串就解析
+                if isinstance(arguments_str, dict):
+                    arguments = arguments_str
+                elif isinstance(arguments_str, str):
+                    arguments = json.loads(arguments_str)
+                else:
+                    logger.error(f"工具调用参数格式错误: {type(arguments_str)}")
+                    continue
                 
                 # 图像生成工具
                 if name == "generateImage":

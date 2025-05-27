@@ -54,10 +54,12 @@ async def chat_completion(
     创建聊天完成请求
     
     此端点处理与大型语言模型的对话，支持工具调用、多模态输入和记忆更新
-    """
-    # 验证模型名称是否在允许列表中（GitHub或Gemini模型）
-    if request.model not in settings.ALLOWED_GITHUB_MODELS and request.model not in settings.ALLOWED_GEMINI_MODELS:
-        all_models = settings.ALLOWED_GITHUB_MODELS + settings.ALLOWED_GEMINI_MODELS
+    """    
+    # 验证模型名称是否在允许列表中（GitHub、Gemini或Ollama模型）
+    if (request.model not in settings.ALLOWED_GITHUB_MODELS and 
+        request.model not in settings.ALLOWED_GEMINI_MODELS and 
+        request.model not in settings.ALLOWED_OLLAMA_MODELS):
+        all_models = settings.ALLOWED_GITHUB_MODELS + settings.ALLOWED_GEMINI_MODELS + settings.ALLOWED_OLLAMA_MODELS
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"模型 {request.model} 不受支持。支持的模型: {', '.join(all_models)}"
