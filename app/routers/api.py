@@ -199,11 +199,11 @@ async def chat_completion(
             if "choices" in final_response and final_response["choices"]:
                 message = final_response["choices"][0]["message"].get("content") or message  # 确保空值时使用原来的message
     
-    # 创建唯一的交互ID用于追踪
+  # 创建唯一的交互ID用于追踪
     interaction_id = str(uuid.uuid4())
     
     # 将对话记录保存到MongoDB
-    create_chat_log(
+    await create_chat_log(
         request.user_id,
         request.model,
         request.messages[-1].content if request.messages else "",
