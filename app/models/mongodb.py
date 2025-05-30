@@ -2,11 +2,16 @@ from datetime import datetime
 from pymongo import MongoClient
 from bson import ObjectId
 from app.core.config import get_settings
+import gridfs
+import io
 
 settings = get_settings()
 client = MongoClient(settings.MONGODB_URL)
 db = client.get_default_database()
 from app.utils.logger import logger
+
+# 初始化GridFS
+fs = gridfs.GridFS(db)
 
 # 聊天记录集合
 chat_log_collection = db["chat_logs"]
@@ -16,6 +21,169 @@ memory_collection = db["memories"]
 
 # 用户使用量集合
 usage_collection = db["usage"]
+
+# 文件元数据集合
+file_metadata_collection = db["file_metadata"]
+
+
+def get_database():
+    """获取数据库连接"""
+    try:
+        # 验证连接是否可用
+        client.admin.command('ping')
+        return db
+    except Exception as e:
+        logger.error(f"MongoDB连接失败: {str(e)}")
+        return None
+
+
+def save_file_to_mongodb(file_id: str, filename: str, content_type: str, file_content: bytes, metadata: dict):
+    """
+    将文件保存到MongoDB的GridFS中
+    
+    参数:
+        file_id: 文件唯一标识符
+        filename: 原始文件名
+        content_type: 文件MIME类型
+        file_content: 文件二进制内容
+        metadata: 文件相关元数据
+    
+    返回:
+        文件ID字符串
+    """
+    try:
+        # 将文件存储到GridFS
+        stored_file_id = fs.put(
+            io.BytesIO(file_content), 
+            filename=filename,
+            content_type=content_type,
+            metadata=metadata
+        )
+        
+        # 更新元数据中的GridFS ID
+        metadata['gridfs_id'] = str(stored_file_id)
+        
+        # 存储元数据到专门的集合
+        file_metadata_collection.insert_one(metadata)
+        
+        logger.info(f"文件已成功存储到MongoDB GridFS: {file_id}")
+        return str(stored_file_id)
+    except Exception as e:
+        logger.error(f"存储文件到MongoDB GridFS失败: {str(e)}")
+        raise e
+
+
+def get_file_from_mongodb(file_id: str):
+    """
+    从MongoDB的GridFS中获取文件
+    
+    参数:
+        file_id: 文件唯一标识符
+    
+    返回:
+        (文件内容, 文件名, 内容类型, 元数据) 元组，如果文件不存在则返回 (None, None, None, None)
+    """
+    try:
+        # 从元数据集合中查找文件
+        metadata = file_metadata_collection.find_one({"file_id": file_id})
+        
+        if not metadata:
+            return None, None, None, None
+            
+        # 从GridFS获取文件
+        if 'gridfs_id' in metadata:
+            gridfs_id = ObjectId(metadata['gridfs_id'])
+            grid_out = fs.get(gridfs_id)
+            
+            # 读取文件内容
+            file_content = grid_out.read()
+            filename = grid_out.filename
+            content_type = grid_out.content_type
+            
+            # 处理元数据中的ObjectId
+            if '_id' in metadata:
+                metadata['_id'] = str(metadata['_id'])
+                
+            return file_content, filename, content_type, metadata
+        else:
+            logger.warning(f"文件元数据中没有gridfs_id: {file_id}")
+            return None, None, None, metadata
+            
+    except Exception as e:
+        logger.error(f"从MongoDB GridFS获取文件失败: {str(e)}")
+        return None, None, None, None
+
+
+def delete_file_from_mongodb(file_id: str):
+    """
+    从MongoDB的GridFS中删除文件
+    
+    参数:
+        file_id: 文件唯一标识符
+        
+    返回:
+        删除是否成功的布尔值
+    """
+    try:
+        # 从元数据集合中查找文件
+        metadata = file_metadata_collection.find_one({"file_id": file_id})
+        
+        if not metadata or 'gridfs_id' not in metadata:
+            logger.warning(f"找不到要删除的文件或没有gridfs_id: {file_id}")
+            return False
+            
+        # 删除GridFS中的文件
+        gridfs_id = ObjectId(metadata['gridfs_id'])
+        fs.delete(gridfs_id)
+        
+        # 删除元数据
+        file_metadata_collection.delete_one({"file_id": file_id})
+        
+        logger.info(f"文件已从MongoDB GridFS成功删除: {file_id}")
+        return True
+            
+    except Exception as e:
+        logger.error(f"从MongoDB GridFS删除文件失败: {str(e)}")
+        return False
+
+
+def list_files_in_mongodb(user_id: str = None, tags: list = None, limit: int = 50, skip: int = 0):
+    """
+    列出MongoDB中存储的文件
+    
+    参数:
+        user_id: 可选的用户ID筛选
+        tags: 可选的标签列表筛选
+        limit: 返回结果的最大数量
+        skip: 跳过的结果数量(用于分页)
+        
+    返回:
+        文件元数据列表
+    """
+    try:
+        # 构建查询条件
+        query = {}
+        if user_id:
+            query["user_id"] = user_id
+        if tags and len(tags) > 0:
+            query["tags"] = {"$in": tags}
+            
+        # 执行查询
+        cursor = file_metadata_collection.find(query).sort("upload_time", -1).skip(skip).limit(limit)
+        files = list(cursor)
+        
+        # 处理ObjectId
+        for file in files:
+            if '_id' in file:
+                file['_id'] = str(file['_id'])
+            if 'gridfs_id' in file:
+                file['gridfs_id'] = str(file['gridfs_id'])
+                
+        return files
+            
+    except Exception as e:
+        logger.error(f"列出MongoDB文件失败: {str(e)}")
+        return []
 
 
 async def create_chat_log(user_id: str, model: str, prompt: str, reply: str, interaction_id: str = None):

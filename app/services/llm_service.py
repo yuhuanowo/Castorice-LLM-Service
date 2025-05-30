@@ -1706,6 +1706,48 @@ class LLMService:
                 
         return tool_results
 
+    # 給實時聊天完成方法提供簡化接口
+    async def chat_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        model: str,
+        temperature: Optional[float] = 0.7,
+        max_tokens: Optional[int] = None,
+        tools: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """
+        簡化的聊天完成方法
+        
+        Args:
+            messages: 消息列表
+            model: 模型名稱
+            temperature: 生成溫度
+            max_tokens: 最大token數
+            tools: 工具定義列表
+            
+        Returns:
+            包含響應消息的字典
+        """
+        try:
+            # 使用現有的send_llm_request方法
+            response = await self.send_llm_request(
+                messages=messages,
+                model=model,
+                tools=tools,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"聊天完成請求失敗: {str(e)}")
+            return {
+                "message": f"生成回覆時發生錯誤: {str(e)}",
+                "model": model,
+                "usage": {}
+            }
+
 
 # 创建单例实例
 llm_service = LLMService()

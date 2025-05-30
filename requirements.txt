@@ -15,8 +15,7 @@ starlette
 jinja2
 azure-ai-inference
 google-genai
-ivgoogle-genai
-ytest-asyncio
+pytest-asyncio
 pytest-cov
 asynctest
 aiosignal
@@ -24,3 +23,5 @@ langchain
 html2text
 numpy
 pandas
+bson
+bs4
