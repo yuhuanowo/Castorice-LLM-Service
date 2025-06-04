@@ -12,7 +12,15 @@ import urllib.parse
 from bson import ObjectId
 logger = logging.getLogger(__name__)
 
-from app.models.mongodb import create_chat_log, get_chat_logs, get_user_usage, save_file_to_mongodb, get_file_from_mongodb, list_files_in_mongodb, delete_file_from_mongodb
+from app.models.mongodb import (
+    create_chat_log, get_chat_logs, get_user_usage, save_file_to_mongodb, 
+    get_file_from_mongodb, list_files_in_mongodb, delete_file_from_mongodb,
+    # 新增会话管理函数
+    create_chat_session, add_message_to_session, get_chat_session,
+    get_user_chat_sessions, update_session_title, delete_chat_session,
+    # 图片相关函数
+    save_image_to_mongodb, get_image_from_mongodb, get_session_images
+)
 from app.models.sqlite import create_chat_log_sqlite
 from app.core.dependencies import get_api_key, get_settings_dependency
 from app.core.config import Settings
@@ -96,14 +104,37 @@ async def chat_completion(
         request.audio,
         request.model
     )
-    
-    # 处理历史消息逻辑
+      # 处理历史消息逻辑
     history_messages = []
     
     # TODO: 处理多条消息輸入的情况
     
-    # 只有一条消息或没有消息，且没有禁用历史功能，尝试从数据库获取
-    if not getattr(request, "disable_history", False):
+    # 检查是否提供了session_id
+    session_id = getattr(request, 'session_id', None)
+    
+    if session_id and not getattr(request, "disable_history", False):
+        # 新的基于会话的历史记录获取
+        logger.info(f"从会话获取历史消息: session_id={session_id}")
+        session = get_chat_session(session_id, request.user_id)
+        
+        if session and 'messages' in session:
+            # 取最近10条消息作为上下文
+            recent_messages = session['messages'][-10:] if len(session['messages']) > 10 else session['messages']
+            
+            for msg in recent_messages:
+                history_messages.append({
+                    "role": msg.get("role"), 
+                    "content": msg.get("content")
+                })
+            
+            logger.info(f"从会话获取的历史消息数量: {len(history_messages)}")
+        else:
+            logger.info(f"会话不存在或无历史消息: session_id={session_id}")
+            
+    elif not getattr(request, "disable_history", False):
+        # 原有的兼容性逻辑：从旧的chat_logs获取
+        logger.info("从传统chat_logs获取历史消息")
+        
         # 获取用户最近5条历史消息
         db_history = get_chat_logs(request.user_id, 5)
         
@@ -170,14 +201,49 @@ async def chat_completion(
                     if not content_str:
                         logger.error("工具结果内容为空")
                         continue
-                    
-                    # 直接从LLM服务获取图片数据
+                      # 直接从LLM服务获取图片数据
                     image_data_uri = llm_service.last_generated_image
+                    image_url = None
+                    
                     if image_data_uri:
                         logger.info(f"从LLM服务获取图片dataURI，长度: {len(image_data_uri)}")
-                        # 添加关于图片的描述到消息中
-                        if not message:
-                            message = "已生成图片"
+                        
+                        # 检查是否提供了session_id
+                        session_id = getattr(request, 'session_id', None)
+                        if not session_id:
+                            session_id = str(uuid.uuid4())  # 如果没有会话ID，创建一个临时ID
+                        
+                        try:
+                            # 提取base64数据部分
+                            base64_data = image_data_uri.split('base64,')[1] if 'base64,' in image_data_uri else image_data_uri
+                            
+                            # 确定MIME类型
+                            mime_type = "image/jpeg"
+                            if 'data:' in image_data_uri and ';base64,' in image_data_uri:
+                                mime_type = image_data_uri.split('data:')[1].split(';base64,')[0]
+                            
+                            # 保存图片到MongoDB
+                            image_id = await save_image_to_mongodb(
+                                session_id=session_id,
+                                user_id=request.user_id,
+                                base64_data=base64_data,
+                                mime_type=mime_type
+                            )
+                            
+                            # 构建图片URL
+                            image_url = f"/api/v1/images/{str(image_id)}"
+                            logger.info(f"图片已保存到MongoDB: image_id={str(image_id)}")
+                            
+                            # 更新image_data_uri为URL（前端将使用此URL获取图片）
+                            image_data_uri = image_url
+                            
+                            # 添加关于图片的描述到消息中
+                            if not message:
+                                message = "已生成图片"
+                        except Exception as e:
+                            logger.error(f"保存图片到MongoDB失败: {str(e)}")
+                            if not message:
+                                message = "图片生成成功，但保存失败"
                     else:
                         # 尝试解析JSON查找错误信息
                         try:
@@ -202,30 +268,75 @@ async def chat_completion(
             final_response = await llm_service.send_llm_request(new_messages, request.model)
             if "choices" in final_response and final_response["choices"]:
                 message = final_response["choices"][0]["message"].get("content") or message  # 确保空值时使用原来的message
-    
-  # 创建唯一的交互ID用于追踪
+      # 创建唯一的交互ID用于追踪
     interaction_id = str(uuid.uuid4())
     
-    # 将对话记录保存到MongoDB
-    await create_chat_log(
-        request.user_id,
-        request.model,
-        request.messages[-1].content if request.messages else "",
-        message,
-        interaction_id
-    )
+    # 获取用户当前消息内容
+    user_message_content = request.messages[-1].content if request.messages else ""
     
-    # 同时将对话记录保存到SQLite（作为备份或兼容旧系统）
-    create_chat_log_sqlite(
-        request.user_id,
-        request.model,
-        request.messages[-1].content if request.messages else "",
-        message,
-        interaction_id
-    )
+    # 检查是否提供了session_id（基于会话的新逻辑）
+    session_id = getattr(request, 'session_id', None)
+    
+    if session_id:
+        # 新的基于会话的存储逻辑
+        logger.info(f"使用会话存储模式: session_id={session_id}")
+        
+        # 添加用户消息到会话
+        user_message = {
+            "id": str(uuid.uuid4()),
+            "role": "user",
+            "content": user_message_content,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        user_result = add_message_to_session(session_id, request.user_id, user_message, request.model)
+        
+        # 添加助手回复到会话
+        assistant_message = {
+            "id": str(uuid.uuid4()),
+            "role": "assistant", 
+            "content": message,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        assistant_result = add_message_to_session(session_id, request.user_id, assistant_message, request.model)
+        
+        if user_result["success"] and assistant_result["success"]:
+            logger.info(f"消息已保存到会话: session_id={session_id}")
+        else:
+            logger.error(f"保存消息到会话失败: user_result={user_result}, assistant_result={assistant_result}")
+            
+        # 如果会话的第一条消息，生成标题
+        session = get_chat_session(session_id, request.user_id)
+        if session and session.get('message_count', 0) <= 2:  # 第一轮对话（用户+助手=2条消息）
+            title = user_message_content[:30] + ("..." if len(user_message_content) > 30 else "")
+            update_session_title(session_id, request.user_id, title)
+            logger.info(f"已为会话生成标题: {title}")
+            
+    else:
+        # 保持原有的兼容性逻辑
+        logger.info("使用传统存储模式（兼容旧版本）")
+        
+        # 将对话记录保存到MongoDB（旧版本逻辑）
+        await create_chat_log(
+            request.user_id,
+            request.model,
+            user_message_content,
+            message,
+            interaction_id
+        )
+        
+        # 同时将对话记录保存到SQLite（作为备份或兼容旧系统）
+        create_chat_log_sqlite(
+            request.user_id,
+            request.model,
+            user_message_content,
+            message,
+            interaction_id
+        )
     
     # 在后台异步更新用户长期记忆
-    prompt = request.messages[-1].content if request.messages else ""
+    prompt = user_message_content
     asyncio.create_task(background_memory_update(request.user_id, prompt))
     logger.info(f"记忆更新任务已在后台启动，用户ID: {request.user_id}")
     
@@ -795,3 +906,241 @@ async def stream_chat(
             "Content-Type": "text/event-stream"
         }
     )
+
+
+# MARK: Chat Session Management
+
+@router.post("/sessions", response_model=schemas.ChatSessionResponse)
+async def create_new_chat_session(
+    request: schemas.CreateSessionRequest,
+    api_key: str = Depends(get_api_key)
+):
+    """
+    创建新的聊天会话
+    """
+    try:
+        session_id = request.session_id or str(uuid.uuid4())
+        result = create_chat_session(
+            user_id=request.user_id,
+            session_id=session_id,
+            title=request.title or "新对话"
+        )
+        
+        if result["success"]:
+            return {
+                "session_id": result["session_id"],
+                "success": True,
+                "message": "会话创建成功"
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"创建会话失败: {result.get('error', '未知错误')}"
+            )
+    except Exception as e:
+        logger.error(f"创建会话失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"创建会话失败: {str(e)}"
+        )
+
+
+@router.get("/sessions/{user_id}", response_model=schemas.ChatSessionListResponse)
+async def get_user_sessions(
+    user_id: str,
+    limit: int = 20,
+    skip: int = 0,
+    api_key: str = Depends(get_api_key)
+):
+    """
+    获取用户的聊天会话列表
+    """
+    try:
+        sessions = get_user_chat_sessions(user_id, limit, skip)
+        
+        # 处理MongoDB对象序列化
+        sessions_serialized = json_serialize_mongodb(sessions)
+        
+        return {
+            "sessions": sessions_serialized,
+            "total": len(sessions_serialized),
+            "success": True
+        }
+    except Exception as e:
+        logger.error(f"获取用户会话列表失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取会话列表失败: {str(e)}"
+        )
+
+
+@router.get("/sessions/{user_id}/{session_id}", response_model=schemas.ChatSessionDetailResponse)
+async def get_session_detail(
+    user_id: str,
+    session_id: str,
+    api_key: str = Depends(get_api_key)
+):
+    """
+    获取特定会话的详细信息
+    """
+    try:
+        session = get_chat_session(session_id, user_id)
+        
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="会话不存在"
+            )
+        
+        # 处理MongoDB对象序列化
+        session_serialized = json_serialize_mongodb(session)
+        
+        return {
+            "session": session_serialized,
+            "success": True
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取会话详情失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取会话详情失败: {str(e)}"
+        )
+
+
+@router.put("/sessions/{user_id}/{session_id}/title", response_model=schemas.ChatSessionResponse)
+async def update_session_title_endpoint(
+    user_id: str,
+    session_id: str,
+    request: schemas.UpdateSessionTitleRequest,
+    api_key: str = Depends(get_api_key)
+):
+    """
+    更新会话标题
+    """
+    try:
+        result = update_session_title(session_id, user_id, request.title)
+        
+        if result["success"]:
+            return {
+                "session_id": session_id,
+                "success": True,
+                "message": "会话标题更新成功"
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"更新会话标题失败: {result.get('error', '未知错误')}"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新会话标题失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"更新会话标题失败: {str(e)}"
+        )
+
+
+@router.delete("/sessions/{user_id}/{session_id}", response_model=schemas.ChatSessionResponse)
+async def delete_session_endpoint(
+    user_id: str,
+    session_id: str,
+    api_key: str = Depends(get_api_key)
+):
+    """
+    删除聊天会话
+    """
+    try:
+        result = delete_chat_session(session_id, user_id)
+        
+        if result["success"]:
+            return {
+                "session_id": session_id,
+                "success": True,
+                "message": "会话删除成功"
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"删除会话失败: {result.get('error', '未知错误')}"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除会话失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"删除会话失败: {str(e)}"
+        )
+
+
+# MARK: 图片存储和检索API
+@router.get("/images/{image_id}")
+async def get_image(
+    image_id: str
+):
+    """
+    根据ID从MongoDB获取图片
+    
+    此端点返回一个先前存储的图片，格式为data URI。
+    图片资源公开可访问，无需API密钥认证。
+    """
+    try:
+        # 从MongoDB获取图片数据
+        image_data = await get_image_from_mongodb(image_id)
+        
+        if not image_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"找不到ID为 {image_id} 的图片"
+            )
+          # 解码base64数据为字节
+        import base64
+        image_bytes = base64.b64decode(image_data['data'])
+        
+        # 返回实际的图片字节
+        return Response(
+            content=image_bytes,
+            media_type=image_data['mime_type']
+        )
+        
+    except Exception as e:
+        logger.error(f"获取图片失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取图片失败: {str(e)}"
+        )
+
+@router.get("/session/{session_id}/images")
+async def get_session_images_list(
+    session_id: str,
+    api_key: str = Depends(get_api_key)
+):
+    """
+    获取指定会话的所有图片ID列表
+    
+    此端点返回特定会话中所有图片的ID列表。
+    """
+    try:
+        # 获取会话图片列表
+        image_ids = await get_session_images(session_id)
+        
+        # 构建图片URL列表
+        image_urls = [f"/api/v1/images/{image_id}" for image_id in image_ids]
+        
+        return {
+            "session_id": session_id,
+            "image_count": len(image_ids),
+            "image_ids": image_ids,
+            "image_urls": image_urls,
+            "success": True
+        }
+        
+    except Exception as e:
+        logger.error(f"获取会话图片列表失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取会话图片列表失败: {str(e)}"
+        )

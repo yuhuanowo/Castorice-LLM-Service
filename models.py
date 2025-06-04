@@ -36,6 +36,7 @@ class ChatCompletionRequest(BaseModel):
         messages: 对话历史消息列表
         model: 使用的模型名称
         user_id: 用户标识符
+        session_id: 可选的会话ID，用于基于会话的存储
         tools: 可选的工具定义
         enable_search: 是否启用搜索功能
         image: 可选的图片base64数据
@@ -47,6 +48,7 @@ class ChatCompletionRequest(BaseModel):
     messages: List[ChatMessage]
     model: str = Field(..., description="要使用的模型")
     user_id: str = Field(..., description="用户标识符")
+    session_id: Optional[str] = Field(None, description="会话ID，用于基于会话的存储")
     tools: Optional[List[Dict[str, Any]]] = None
     enable_search: Optional[bool] = False
     image: Optional[str] = None
@@ -277,3 +279,122 @@ class StreamChatChunk(BaseModel):
     created: int
     model: str
     choices: List[Dict[str, Any]]
+
+# MARK: 会话管理相关模型
+
+class CreateSessionRequest(BaseModel):
+    """
+    创建会话请求模型
+    
+    Attributes:
+        user_id: 用户标识符
+        session_id: 可选的会话ID，不提供则自动生成
+        title: 会话标题
+    """
+    user_id: str = Field(..., description="用户标识符")
+    session_id: Optional[str] = Field(None, description="会话ID")
+    title: Optional[str] = Field("新对话", description="会话标题")
+
+
+class ChatSessionResponse(BaseModel):
+    """
+    会话响应模型
+    
+    Attributes:
+        session_id: 会话ID
+        success: 操作是否成功
+        message: 响应消息
+    """
+    session_id: str
+    success: bool
+    message: str
+
+
+class ChatSessionListResponse(BaseModel):
+    """
+    会话列表响应模型
+    
+    Attributes:
+        sessions: 会话列表
+        total: 会话总数
+        success: 操作是否成功
+    """
+    sessions: List[Dict[str, Any]]
+    total: int
+    success: bool
+
+
+class ChatSessionDetailResponse(BaseModel):
+    """
+    会话详情响应模型
+    
+    Attributes:
+        session: 会话详细信息
+        success: 操作是否成功
+    """
+    session: Dict[str, Any]
+    success: bool
+
+
+class UpdateSessionTitleRequest(BaseModel):
+    """
+    更新会话标题请求模型
+    
+    Attributes:
+        title: 新的会话标题
+    """
+    title: str = Field(..., description="新的会话标题")
+
+
+class ChatCompletionRequestV2(BaseModel):
+    """
+    基于会话的聊天完成请求模型（新版本）
+    
+    Attributes:
+        session_id: 会话ID
+        message: 当前消息
+        user_id: 用户标识符
+        model: 使用的模型名称
+        tools: 可选的工具定义
+        enable_search: 是否启用搜索功能
+        image: 可选的图片base64数据
+        language: 对话语言
+    """
+    session_id: str = Field(..., description="会话ID")
+    message: str = Field(..., description="用户消息")
+    user_id: str = Field(..., description="用户标识符")
+    model: str = Field(..., description="要使用的模型")
+    tools: Optional[List[Dict[str, Any]]] = None
+    enable_search: Optional[bool] = False
+    image: Optional[str] = None
+    language: str = "zh-CN"
+
+
+class ImageSaveRequest(BaseModel):
+    """
+    图片保存请求模型
+    
+    Attributes:
+        session_id: 会话ID
+        user_id: 用户标识符
+        base64_data: 图片的base64编码数据
+        mime_type: 图片的MIME类型
+    """
+    session_id: str = Field(..., description="会话ID")
+    user_id: str = Field(..., description="用户标识符")
+    base64_data: str = Field(..., description="图片的base64编码数据")
+    mime_type: str = Field("image/jpeg", description="图片的MIME类型")
+
+
+class ImageSaveResponse(BaseModel):
+    """
+    图片保存响应模型
+    
+    Attributes:
+        image_id: 保存的图片ID
+        url: 图片访问URL
+        success: 操作是否成功
+    """
+    image_id: str
+    url: str
+    success: bool

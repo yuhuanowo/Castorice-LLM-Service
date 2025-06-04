@@ -965,5 +965,175 @@ class AgentService:
             logger.error(f"检查使用量错误: {str(e)}")
             raise Exception(f"使用量检查失败: {str(e)}")
 
+    async def run_stream(
+        self,
+        user_id: str,
+        prompt: str,
+        model_name: str,
+        enable_memory: bool = True,
+        enable_reflection: bool = True,
+        enable_mcp: bool = True,
+        enable_react_mode: bool = True,
+        max_steps: Optional[int] = None,
+        system_prompt_override: Optional[Dict[str, str]] = None,
+        additional_context: Optional[List[Dict[str, str]]] = None,
+        tools_config: Optional[Dict[str, bool]] = None,
+        image: Optional[str] = None,
+        audio: Optional[str] = None,
+        on_step=None
+    ) -> Dict[str, Any]:
+        """
+        與 run 相同，但每個推理步驟都會調用 on_step callback（async function），用於流式SSE等場景。
+        """
+        from app.services.llm_service import llm_service
+        llm_service.last_generated_image = None
+        interaction_id = str(uuid.uuid4())
+        start_time = time.time()
+        steps_taken = 0
+        max_steps_limit = max_steps if max_steps is not None else self.max_steps
+        enable_search = True
+        include_advanced_tools = settings.AGENT_DEFAULT_ADVANCED_TOOLS
+        if tools_config:
+            enable_search = tools_config.get("enable_search", True)
+            include_advanced_tools = tools_config.get("include_advanced_tools", settings.AGENT_DEFAULT_ADVANCED_TOOLS)
+        try:
+            # 初始化消息
+            memory_content = ""
+            if enable_memory:
+                memory = get_user_memory(user_id)
+                if memory:
+                    memory_content = memory
+            system_prompt = system_prompt_override if system_prompt_override else self._get_system_prompt(enable_mcp, enable_react_mode)
+            messages = [system_prompt]
+            if additional_context:
+                messages.extend(additional_context)
+            if memory_content:
+                messages.append({"role": "system", "content": memory_content})
+            user_message = await llm_service.format_user_message(
+                prompt=prompt,
+                image=image,
+                audio=audio,
+                model_name=model_name
+            )
+            messages.extend(user_message)
+            # 推送初始化狀態
+            if on_step:
+                await on_step({"status": "thinking", "message": "初始化Agent...", "details": {"prompt": prompt}})
+            if enable_react_mode:
+                # 1. 规划阶段
+                await self._stream_planning_phase(messages, user_id, model_name, on_step)
+                # 2. 执行循环
+                result = await self._stream_execution_loop(
+                    messages, user_id, model_name, max_steps_limit, enable_search, include_advanced_tools, enable_mcp, on_step
+                )
+                # 3. 最终回复
+                await self._update_usage_stats(user_id, model_name)
+                final_response = await llm_service.send_llm_request(messages, model_name)
+                final_content = final_response["choices"][0]["message"].get("content", "") if "choices" in final_response and final_response["choices"] else ""
+                if on_step:
+                    await on_step({"status": "done", "message": final_content})
+                await create_chat_log(user_id, model_name, prompt, final_content, interaction_id)
+                asyncio.create_task(background_memory_update(user_id, prompt))
+                execution_time = time.time() - start_time
+                return {
+                    "success": True,
+                    "interaction_id": interaction_id,
+                    "response": final_response,
+                    "execution_trace": [],
+                    "execution_time": execution_time,
+                    "steps_taken": result["steps_taken"],
+                    "generated_image": llm_service.last_generated_image
+                }
+            else:
+                # 简单模式暂不支持流式
+                result = await self.run(
+                    user_id=user_id,
+                    prompt=prompt,
+                    model_name=model_name,
+                    enable_memory=enable_memory,
+                    enable_reflection=enable_reflection,
+                    enable_mcp=enable_mcp,
+                    enable_react_mode=enable_react_mode,
+                    max_steps=max_steps,
+                    system_prompt_override=system_prompt_override,
+                    additional_context=additional_context,
+                    tools_config=tools_config,
+                    image=image,
+                    audio=audio
+                )
+                if on_step:
+                    await on_step({"status": "done", "message": result["response"]["choices"][0]["message"]["content"] if "choices" in result["response"] else "Agent已完成推理"})
+                return result
+        except Exception as e:
+            if on_step:
+                await on_step({"status": "error", "message": str(e)})
+            raise
+
+    async def _stream_planning_phase(self, messages, user_id, model_name, on_step):
+        """推理流式规划阶段"""
+        if on_step:
+            await on_step({"status": "planning", "message": "開始規劃..."})
+        planning_message = {"role": "user", "content": settings.PROMPT_PLANNING_MESSAGE}
+        planning_messages = messages.copy()
+        planning_messages.append(planning_message)
+        await self._update_usage_stats(user_id, model_name)
+        planning_response = await llm_service.send_llm_request(planning_messages, model_name)
+        plan = planning_response["choices"][0]["message"].get("content", "") if "choices" in planning_response and planning_response["choices"] else ""
+        if on_step:
+            await on_step({"status": "planning", "message": plan, "plan": plan})
+        messages.append({"role": "assistant", "content": plan})
+
+    async def _stream_execution_loop(self, messages, user_id, model_name, max_steps_limit, enable_search, include_advanced_tools, enable_mcp, on_step):
+        """推理流式执行循环，含429重试"""
+        steps_taken = 0
+        for i in range(max_steps_limit):
+            steps_taken += 1
+            if on_step:
+                await on_step({"status": "executing", "message": f"第{i+1}步執行..."})
+            await self._update_usage_stats(user_id, model_name)
+            retry_count = 0
+            while True:
+                try:
+                    response = await llm_service.send_llm_request(
+                        messages, model_name, llm_service.get_tool_definitions(enable_search, include_advanced_tools, enable_mcp)
+                    )
+                    break
+                except Exception as e:
+                    err_str = str(e)
+                    if '429' in err_str or 'Rate limit' in err_str or 'Too Many Requests' in err_str:
+                        logger.warning(f"429速率限制，第{retry_count+1}次重试: {err_str}")
+                        if on_step:
+                            await on_step({
+                                "status": "error",
+                                "message": f"模型速率限制，等待60秒后自动重试... (第{retry_count+1}次)",
+                                "details": {"error": True, "raw": err_str, "retry_in": 60, "retry_count": retry_count+1}
+                            })
+                        await asyncio.sleep(60)
+                        retry_count += 1
+                        continue
+                    else:
+                        logger.error(f"LLM请求异常: {err_str}")
+                        if on_step:
+                            await on_step({
+                                "status": "error",
+                                "message": f"LLM请求异常: {err_str}",
+                                "details": {"error": True, "raw": err_str}
+                            })
+                        raise
+            content = response["choices"][0]["message"].get("content", "") if "choices" in response and response["choices"] else ""
+            if on_step:
+                await on_step({"status": "thinking", "message": content})
+            tool_calls = response["choices"][0]["message"].get("tool_calls") if "choices" in response and response["choices"] else None
+            if tool_calls:
+                if on_step:
+                    await on_step({"status": "executing", "message": f"工具調用: {tool_calls}"})
+                tool_results = await llm_service.handle_tool_call(tool_calls)
+                if on_step:
+                    await on_step({"status": "executing", "message": f"工具結果: {tool_results}"})
+                messages.append({"role": "tool", "content": str(tool_results)})
+            if "stop" in response.get("choices", [{}])[0].get("finish_reason", ""):
+                break
+        return {"steps_taken": steps_taken}
+
 # 创建AgentService的单例实例
 agent_service = AgentService()

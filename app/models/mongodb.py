@@ -1,20 +1,35 @@
 from datetime import datetime
 from pymongo import MongoClient
+from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from app.core.config import get_settings
 import gridfs
 import io
 
 settings = get_settings()
-client = MongoClient(settings.MONGODB_URL)
-db = client.get_default_database()
+
+# 同步客户端（用于需要同步操作的地方）
+sync_client = MongoClient(settings.MONGODB_URL)
+sync_db = sync_client.get_default_database()
+
+# 异步客户端（用于异步操作）
+async_client = AsyncIOMotorClient(settings.MONGODB_URL)
+async_db = async_client.get_default_database()
+
+# 使用同步客户端的地方
+client = sync_client
+db = sync_db
+
 from app.utils.logger import logger
 
-# 初始化GridFS
+# 初始化GridFS（同步）
 fs = gridfs.GridFS(db)
 
-# 聊天记录集合
+# 聊天记录集合（旧版本，保留兼容性）
 chat_log_collection = db["chat_logs"]
+
+# 聊天会话集合（新版本，以会话为单位）
+chat_session_collection = db["chat_sessions"]
 
 # 用户记忆集合
 memory_collection = db["memories"]
@@ -24,6 +39,9 @@ usage_collection = db["usage"]
 
 # 文件元数据集合
 file_metadata_collection = db["file_metadata"]
+
+# 圖片集合（异步）
+image_collection = async_db["images"]
 
 
 def get_database():
@@ -187,7 +205,7 @@ def list_files_in_mongodb(user_id: str = None, tags: list = None, limit: int = 5
 
 
 async def create_chat_log(user_id: str, model: str, prompt: str, reply: str, interaction_id: str = None):
-    """创建聊天记录"""
+    """创建聊天记录（保留旧接口兼容性）"""
     chat_log = {
         "user_id": user_id,
         "model": model,
@@ -204,6 +222,148 @@ async def create_chat_log(user_id: str, model: str, prompt: str, reply: str, int
     except Exception as e:
         logger.error(f"创建聊天记录错误: {str(e)}")
         return {"id": None, "success": False, "error": str(e)}
+
+
+def create_chat_session(user_id: str, session_id: str, title: str = "新对话"):
+    """创建新的聊天会话"""
+    chat_session = {
+        "session_id": session_id,
+        "user_id": user_id,
+        "title": title,
+        "messages": [],
+        "model": None,
+        "created_at": datetime.now(),
+        "updated_at": datetime.now(),
+        "message_count": 0
+    }
+    
+    try:
+        result = chat_session_collection.insert_one(chat_session)
+        logger.info(f"创建聊天会话成功: session_id={session_id}, user_id={user_id}")
+        return {"id": str(result.inserted_id), "session_id": session_id, "success": True}
+    except Exception as e:
+        logger.error(f"创建聊天会话错误: {str(e)}")
+        return {"id": None, "session_id": None, "success": False, "error": str(e)}
+
+
+def add_message_to_session(session_id: str, user_id: str, message: dict, model: str = None):
+    """向会话中添加消息"""
+    try:
+        # 准备更新数据
+        update_data = {
+            "$push": {"messages": {
+                "id": message.get("id", str(datetime.now().timestamp())),
+                "role": message.get("role"),
+                "content": message.get("content"),
+                "timestamp": message.get("timestamp", datetime.now().isoformat())
+            }},
+            "$set": {"updated_at": datetime.now()},
+            "$inc": {"message_count": 1}
+        }
+        
+        # 如果提供了模型信息，更新模型字段
+        if model:
+            update_data["$set"]["model"] = model
+            
+        # 更新会话
+        result = chat_session_collection.update_one(
+            {"session_id": session_id, "user_id": user_id},
+            update_data
+        )
+        
+        if result.modified_count > 0:
+            logger.info(f"消息添加成功: session_id={session_id}, message_role={message.get('role')}")
+            return {"success": True, "modified_count": result.modified_count}
+        else:
+            # 如果会话不存在，尝试创建新会话
+            create_result = create_chat_session(user_id, session_id)
+            if create_result["success"]:
+                # 重新尝试添加消息
+                return add_message_to_session(session_id, user_id, message, model)
+            else:
+                logger.error(f"会话不存在且创建失败: session_id={session_id}")
+                return {"success": False, "error": "会话不存在且创建失败"}
+                
+    except Exception as e:
+        logger.error(f"添加消息到会话错误: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+
+def get_chat_session(session_id: str, user_id: str):
+    """获取单个聊天会话"""
+    try:
+        session = chat_session_collection.find_one({"session_id": session_id, "user_id": user_id})
+        
+        if session:
+            # 转换 ObjectId 为字符串
+            if '_id' in session and isinstance(session['_id'], ObjectId):
+                session['_id'] = str(session['_id'])
+            return session
+        else:
+            return None
+            
+    except Exception as e:
+        logger.error(f"获取聊天会话错误: {str(e)}")
+        return None
+
+
+def get_user_chat_sessions(user_id: str, limit: int = 20, skip: int = 0):
+    """获取用户的聊天会话列表"""
+    try:
+        sessions = list(
+            chat_session_collection.find({"user_id": user_id})
+            .sort("updated_at", -1)
+            .skip(skip)
+            .limit(limit)
+        )
+        
+        # 转换 ObjectId 为字符串
+        for session in sessions:
+            if '_id' in session and isinstance(session['_id'], ObjectId):
+                session['_id'] = str(session['_id'])
+                
+        return sessions
+        
+    except Exception as e:
+        logger.error(f"获取用户聊天会话列表错误: {str(e)}")
+        return []
+
+
+def update_session_title(session_id: str, user_id: str, title: str):
+    """更新会话标题"""
+    try:
+        result = chat_session_collection.update_one(
+            {"session_id": session_id, "user_id": user_id},
+            {"$set": {"title": title, "updated_at": datetime.now()}}
+        )
+        
+        if result.modified_count > 0:
+            logger.info(f"会话标题更新成功: session_id={session_id}, title={title}")
+            return {"success": True}
+        else:
+            logger.warning(f"会话不存在或标题未更新: session_id={session_id}")
+            return {"success": False, "error": "会话不存在或标题未更新"}
+            
+    except Exception as e:
+        logger.error(f"更新会话标题错误: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+
+def delete_chat_session(session_id: str, user_id: str):
+    """删除聊天会话"""
+    try:
+        result = chat_session_collection.delete_one({"session_id": session_id, "user_id": user_id})
+        
+        if result.deleted_count > 0:
+            logger.info(f"会话删除成功: session_id={session_id}")
+            return {"success": True, "deleted_count": result.deleted_count}
+        else:
+            logger.warning(f"会话不存在或删除失败: session_id={session_id}")
+            return {"success": False, "error": "会话不存在"}
+            
+    except Exception as e:
+        logger.error(f"删除会话错误: {str(e)}")
+        return {"success": False, "error": str(e)}
 
 
 def get_chat_logs(user_id: str, limit: int = 10):
@@ -285,3 +445,89 @@ def get_user_usage(user_id: str):
         return usage_doc["models"]
     
     return {}
+
+async def save_image_to_mongodb(session_id: str, user_id: str, base64_data: str, mime_type: str = "image/jpeg"):
+    """
+    將圖片的 base64 數據保存到 MongoDB
+    
+    參數:
+        session_id: 會話 ID
+        user_id: 用戶 ID
+        base64_data: 圖片的 base64 數據（不含 data:image/jpeg;base64, 前綴）
+        mime_type: 圖片的 MIME 類型，默認為 image/jpeg
+        
+    返回:
+        image_id: 圖片在 MongoDB 中的 ID
+    """
+    try:
+        # 創建圖片記錄
+        image_record = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "base64_data": base64_data,
+            "mime_type": mime_type,
+            "created_at": datetime.now()
+        }
+        
+        # 插入到 MongoDB
+        result = await image_collection.insert_one(image_record)
+        
+        # 返回插入的 ID
+        return result.inserted_id
+    except Exception as e:
+        logger.error(f"保存圖片到 MongoDB 失敗: {str(e)}")
+        raise e
+
+async def get_image_from_mongodb(image_id: str):
+    """
+    從 MongoDB 獲取圖片數據
+    
+    參數:
+        image_id: 圖片在 MongoDB 中的 ID
+        
+    返回:
+        image_data: 包含 base64_data 和 mime_type 的字典
+    """
+    try:
+        # 將字符串 ID 轉換為 ObjectId
+        obj_id = ObjectId(image_id)
+        
+        # 從 MongoDB 獲取圖片記錄
+        image_record = await image_collection.find_one({"_id": obj_id})
+        
+        if not image_record:
+            logger.error(f"找不到 ID 為 {image_id} 的圖片")
+            return None
+        
+        # 從記錄中提取所需數據
+        return {
+            "data": image_record["base64_data"],
+            "mime_type": image_record["mime_type"],
+            "created_at": image_record["created_at"]
+        }
+    except Exception as e:
+        logger.error(f"從 MongoDB 獲取圖片失敗: {str(e)}")
+        raise e
+
+async def get_session_images(session_id: str):
+    """
+    獲取指定會話的所有圖片 ID
+    
+    參數:
+        session_id: 會話 ID
+        
+    返回:
+        image_ids: 圖片 ID 列表
+    """
+    try:
+        # 查詢指定會話的所有圖片
+        cursor = image_collection.find({"session_id": session_id})
+        
+        # 提取圖片 ID
+        image_records = await cursor.to_list(length=100)  # 限制最多返回 100 個圖片
+        
+        # 返回圖片 ID 列表
+        return [str(record["_id"]) for record in image_records]
+    except Exception as e:
+        logger.error(f"獲取會話圖片失敗: {str(e)}")
+        raise e

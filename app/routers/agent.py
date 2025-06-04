@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Request
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel
 import uuid
 from datetime import datetime
 import logging
 import json
+import asyncio
+
+from fastapi.responses import StreamingResponse
 
 from app.core.dependencies import get_api_key, get_settings_dependency
 from app.core.config import Settings
@@ -245,3 +248,102 @@ async def run_unified_agent(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Agent处理错误: {str(e)}"
         )
+
+
+@router.post("/stream", tags=["agent"])
+async def agent_stream(
+    request: Request,
+    settings: Settings = Depends(get_settings_dependency),
+    api_key: str = Depends(get_api_key),
+):
+    """
+    Agent流式推理接口（SSE）
+    請求體同 /api/v1/agent/ ，回應為流式SSE格式，每步推送一條推理狀態。
+    """
+    body = await request.json()
+    import uuid
+    from datetime import datetime
+    import json
+    import asyncio
+    interaction_id = str(uuid.uuid4())
+    step_counter = 0
+
+    async def event_generator():
+        queue = asyncio.Queue()
+        nonlocal step_counter
+        # 定义 on_step callback，将每步推理放入 queue
+        async def on_step(step: dict):
+            nonlocal step_counter
+            step_counter += 1
+            data = {
+                "step": step_counter,
+                "status": step.get("status", "thinking"),
+                "message": step.get("message", ""),
+                "plan": step.get("plan"),
+                "timestamp": datetime.utcnow().isoformat(),
+                "details": step.get("details", {})
+            }
+            await queue.put(data)
+        # 启动 agent_service.run_stream 作為 background task
+        async def run_agent():
+            try:
+                result = await agent_service.run_stream(
+                    user_id=body.get("user_id", "test"),
+                    prompt=body.get("prompt", ""),
+                    model_name=body.get("model_name", "gpt-4o-mini"),
+                    enable_memory=body.get("enable_memory", True),
+                    enable_reflection=body.get("enable_reflection", True),
+                    enable_mcp=body.get("enable_mcp", False),
+                    enable_react_mode=body.get("enable_react_mode", True),
+                    max_steps=body.get("max_steps"),
+                    system_prompt_override=body.get("system_prompt_override"),
+                    additional_context=body.get("context"),
+                    tools_config=body.get("tools_config"),
+                    image=body.get("image"),
+                    audio=body.get("audio"),
+                    on_step=on_step
+                )
+                await queue.put(_make_sse_step(
+                    step_counter+1, "done",
+                    result["response"]["choices"][0]["message"]["content"] if "choices" in result["response"] else "Agent已完成推理",
+                    details={"final": True}
+                ))
+            except Exception as e:
+                await queue.put(_make_sse_step(
+                    step_counter+1, "error", str(e), details={"error": True}
+                ))
+            finally:
+                await queue.put(None)  # 结束标记
+
+        def _make_sse_step(step, status, message, plan=None, details=None):
+            return {
+                "step": step,
+                "status": status,
+                "message": message,
+                "plan": plan,
+                "timestamp": datetime.utcnow().isoformat(),
+                "details": details or {}
+            }
+
+        # 启动 agent background task
+        agent_task = asyncio.create_task(run_agent())
+        try:
+            while True:
+                data = await queue.get()
+                if data is None:
+                    break
+                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            error_data = {
+                "step": step_counter+1,
+                "status": "error",
+                "message": str(e),
+                "plan": None,
+                "timestamp": datetime.utcnow().isoformat(),
+                "details": {"error": True}
+            }
+            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+        finally:
+            agent_task.cancel()
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
