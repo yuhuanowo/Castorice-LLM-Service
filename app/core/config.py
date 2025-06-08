@@ -1075,6 +1075,7 @@ class Settings(BaseSettings):
     Low: int = 150 * USER_LIMIT_MULTIPLIER
     High: int = 50 * USER_LIMIT_MULTIPLIER
     Embedding: int = 150 * USER_LIMIT_MULTIPLIER
+    Infinity: int = 9999  # 无限量
     
     # 使用者限制量
     MODEL_USAGE_LIMITS: dict = {
@@ -1145,25 +1146,25 @@ class Settings(BaseSettings):
         "gemma-3n-e4b-it": 7200,
 
         # Ollama
-        "qwen3:8b": 9999,
+        "qwen3:8b": Infinity,
         
         # NVIDIA NIM
-        "google/gemma-3-27b-it": High,
-        "google/gemma-2-27b-it": High,
-        "google/gemma-2-9b-it": Low,
-        "google/gemma-2-2b-it": Low,
-        "meta/llama-3.1-405b-instruct": 10,  # 很大的模型，限制更严格
-        "meta/llama-3.1-70b-instruct": High,
-        "meta/llama-3.1-8b-instruct": Low,
-        "meta/llama-3.2-3b-instruct": Low,
-        "meta/llama-3.2-1b-instruct": Low,
-        "microsoft/phi-3-medium-4k-instruct": Low,
-        "microsoft/phi-3-mini-4k-instruct": Low,
-        "mistralai/mistral-7b-instruct-v0.3": Low,
-        "mistralai/mixtral-8x7b-instruct-v0.1": High,
-        "mistralai/mixtral-8x22b-instruct-v0.1": High,
-        "nvidia/nemotron-4-340b-instruct": 10,  # 很大的模型，限制更严格
-        "nvidia/llama-3.1-nemotron-70b-instruct": High
+        "google/gemma-3-27b-it": Infinity,
+        "google/gemma-2-27b-it": Infinity,
+        "google/gemma-2-9b-it": Infinity,
+        "google/gemma-2-2b-it": Infinity,
+        "meta/llama-3.1-405b-instruct": Infinity,  # 很大的模型，限制更严格
+        "meta/llama-3.1-70b-instruct": Infinity,
+        "meta/llama-3.1-8b-instruct": Infinity,
+        "meta/llama-3.2-3b-instruct": Infinity,
+        "meta/llama-3.2-1b-instruct": Infinity,
+        "microsoft/phi-3-medium-4k-instruct": Infinity,
+        "microsoft/phi-3-mini-4k-instruct": Infinity,
+        "mistralai/mistral-7b-instruct-v0.3": Infinity,
+        "mistralai/mixtral-8x7b-instruct-v0.1": Infinity,
+        "mistralai/mixtral-8x22b-instruct-v0.1": Infinity,
+        "nvidia/nemotron-4-340b-instruct": Infinity,  # 很大的模型，限制更严格
+        "nvidia/llama-3.1-nemotron-70b-instruct": Infinity
     
     }
     
