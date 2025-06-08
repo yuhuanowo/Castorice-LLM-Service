@@ -30,6 +30,7 @@ class ModelProvider(Enum):
     GITHUB = "github"
     GEMINI = "gemini"
     OLLAMA = "ollama"
+    NVIDIA_NIM = "nvidia_nim"
 
 
 class LLMService:
@@ -60,6 +61,11 @@ class LLMService:
         self.ollama_endpoint = settings.OLLAMA_ENDPOINT
         self.ollama_api_key = settings.OLLAMA_API_KEY
         self.ollama_default_model = settings.OLLAMA_DEFAULT_MODEL
+        
+        # NVIDIA NIM API设置
+        self.nvidia_nim_endpoint = settings.NVIDIA_NIM_ENDPOINT
+        self.nvidia_nim_api_key = settings.NVIDIA_NIM_API_KEY
+        self.nvidia_nim_default_model = settings.NVIDIA_NIM_DEFAULT_MODEL
         
         # 存储最近生成的图片
         self.last_generated_image = None
@@ -153,10 +159,8 @@ class LLMService:
         """
         # 从配置中获取提示词
         prompts = settings.PROMPT_SYSTEM_BASE
-        
-        # 获取基础提示并添加语言选择
+          # 获取基础提示并添加语言选择
         base_prompt = prompts.get(language, prompts['en'])
-        base_prompt = f"{base_prompt}语言选择: {language}"
         
         # 根据不同模型确定角色
         role = "system"
@@ -188,13 +192,13 @@ class LLMService:
             "type": "function",
             "function": {
                 "name": "generateImage",
-                "description": "使用cloudflare ai生成图片并回传 Base64 dataURI",
+                "description": "Generate images using Cloudflare AI and return Base64 dataURI",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "prompt": {
                             "type": "string",
-                            "description": "描述所要生成的图片内容"
+                            "description": "Description of the image content to generate"
                         }
                     },
                     "required": ["prompt"]
@@ -206,17 +210,17 @@ class LLMService:
             "type": "function",
             "function": {
                 "name": "searchDuckDuckGo",
-                "description": "使用 DuckDuckGo 搜索引擎进行搜索，仅返回搜索结果的简要信息（标题、摘要和URL）。如果需要获取特定网页的详细内容，请在搜索后使用 fetchWebpageContent 工具，但仅对真正需要深入了解的个别URL使用，以避免过多token消耗。",
+                "description": "Search using DuckDuckGo search engine, returning only brief information (title, summary, and URL) from search results. If you need detailed content from specific web pages, use the fetchWebpageContent tool after searching, but only for individual URLs that truly require in-depth understanding to avoid excessive token consumption.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "搜索关键字",
+                            "description": "Search keywords",
                         },
                         "numResults": {
                             "type": "integer",
-                            "description": "返回的搜索结果数量",
+                            "description": "Number of search results to return",
                             "default": 10,
                         }
                     },
@@ -234,13 +238,13 @@ class LLMService:
                 "type": "function",
                 "function": {
                     "name": "fetchWebpageContent",
-                    "description": "获取网页内容并提取正文文本。注意：此工具会消耗大量token，请谨慎使用。仅在需要深入了解特定网页内容时使用，不要对搜索结果中的每个URL都使用此工具。最佳实践是：先用searchDuckDuckGo获取摘要，然后根据需要仅对1-2个最相关的URL使用此工具。",
+                    "description": "Fetch webpage content and extract main text. Note: This tool consumes significant tokens, use with caution. Only use when you need in-depth understanding of specific webpage content. Do not use this tool for every URL in search results. Best practice: first use searchDuckDuckGo to get summaries, then use this tool only for 1-2 most relevant URLs as needed.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "网页URL"
+                                "description": "Webpage URL"
                             }
                         },
                         "required": ["url"]
@@ -248,23 +252,22 @@ class LLMService:
                 }
             }
             advanced_tools.append(webpage_tool)
-            
-            # 文本分析工具
+              # 文本分析工具
             text_analysis_tool = {
                 "type": "function",
                 "function": {
                     "name": "analyzeText",
-                    "description": "分析文本内容，执行摘要、情感分析等任务",
+                    "description": "Analyze text content, perform tasks such as summarization, sentiment analysis, etc.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "text": {
                                 "type": "string",
-                                "description": "待分析的文本"
+                                "description": "Text to be analyzed"
                             },
                             "task": {
                                 "type": "string",
-                                "description": "分析任务描述，如'摘要','情感分析','关键词提取'等"
+                                "description": "Analysis task description, such as 'summary', 'sentiment analysis', 'keyword extraction', etc."
                             }
                         },
                         "required": ["text", "task"]
@@ -272,23 +275,22 @@ class LLMService:
                 }
             }
             advanced_tools.append(text_analysis_tool)
-            
-            # 内容格式转换工具
+              # 内容格式转换工具
             format_tool = {
                 "type": "function",
                 "function": {
                     "name": "formatContent",
-                    "description": "将内容转换为指定格式，如JSON、Markdown、HTML、CSV等",
+                    "description": "Convert content to specified formats, such as JSON, Markdown, HTML, CSV, etc.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "content": {
                                 "type": "string",
-                                "description": "需要格式化的内容"
+                                "description": "Content to be formatted"
                             },
                             "outputFormat": {
                                 "type": "string",
-                                "description": "输出格式，支持'json','markdown','html','csv'"
+                                "description": "Output format, supports 'json', 'markdown', 'html', 'csv'"
                             }
                         },
                         "required": ["content", "outputFormat"]
@@ -296,26 +298,25 @@ class LLMService:
                 }
             }
             advanced_tools.append(format_tool)
-            
-            # Agent性能评估工具
+              # Agent性能评估工具
             evaluation_tool = {
                 "type": "function",
                 "function": {
                     "name": "evaluateAgentPerformance",
-                    "description": "评估Agent执行性能，包括时间、步骤数、成功率等指标",
+                    "description": "Evaluate Agent execution performance, including time, number of steps, success rate and other metrics",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "executionTrace": {
                                 "type": "array",
-                                "description": "执行跟踪记录",
+                                "description": "Execution trace records",
                                 "items": {
                                     "type": "object"
                                 }
                             },
                             "expectedOutcome": {
                                 "type": "string",
-                                "description": "期望的结果描述（可选）"
+                                "description": "Expected result description (optional)"
                             }
                         },
                         "required": ["executionTrace"]
@@ -323,27 +324,26 @@ class LLMService:
                 }
             }
             advanced_tools.append(evaluation_tool)
-            
-            # 新增工具: 结构化数据生成
+              # 新增工具: 结构化数据生成
             structured_data_tool = {
                 "type": "function",
                 "function": {
                     "name": "generateStructuredData",
-                    "description": "生成结构化数据，如JSON、CSV、表格等",
+                    "description": "Generate structured data, such as JSON, CSV, tables, etc.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "data_type": {
                                 "type": "string",
-                                "description": "数据类型，如'json', 'csv', 'table', 'form'"
+                                "description": "Data type, such as 'json', 'csv', 'table', 'form'"
                             },
                             "requirements": {
                                 "type": "string",
-                                "description": "数据需求描述"
+                                "description": "Data requirements description"
                             },
                             "schema": {
                                 "type": "object",
-                                "description": "可选的数据模式定义"
+                                "description": "Optional data schema definition"
                             }
                         },
                         "required": ["data_type", "requirements"]
@@ -351,23 +351,22 @@ class LLMService:
                 }
             }
             advanced_tools.append(structured_data_tool)
-            
-            # 新增工具: 文本摘要
+              # 新增工具: 文本摘要
             summarize_tool = {
                 "type": "function",
                 "function": {
                     "name": "summarizeContent",
-                    "description": "对长文本内容进行摘要",
+                    "description": "Summarize long text content",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "text": {
                                 "type": "string",
-                                "description": "待摘要的文本"
+                                "description": "Text to be summarized"
                             },
                             "max_length": {
                                 "type": "integer",
-                                "description": "摘要最大长度（字符数）",
+                                "description": "Maximum length of summary (in characters)",
                                 "default": 500
                             }
                         },
@@ -376,23 +375,21 @@ class LLMService:
                 }
             }
             advanced_tools.append(summarize_tool)
-            
-            # 新增工具: 文本翻译
+              # 新增工具: 文本翻译
             translate_tool = {
                 "type": "function",
                 "function": {
                     "name": "translateText",
-                    "description": "将文本翻译成指定语言",
+                    "description": "Translate text to specified language",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "text": {
                                 "type": "string",
-                                "description": "待翻译的文本"
-                            },
-                            "target_language": {
+                                "description": "Text to be translated"
+                            },"target_language": {
                                 "type": "string",
-                                "description": "目标语言，如'en', 'zh-CN', 'ja', 'fr'"
+                                "description": "Target language, such as 'en', 'zh-CN', 'ja', 'fr'"
                             }
                         },
                         "required": ["text", "target_language"]
@@ -400,23 +397,22 @@ class LLMService:
                 }
             }
             advanced_tools.append(translate_tool)
-            
-            # 新增工具: 数据问答
+              # 新增工具: 数据问答
             data_qa_tool = {
                 "type": "function",
                 "function": {
                     "name": "answerFromData",
-                    "description": "根据提供的数据回答问题",
+                    "description": "Answer questions based on provided data",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "question": {
                                 "type": "string",
-                                "description": "问题"
+                                "description": "Question"
                             },
                             "data": {
                                 "type": "array",
-                                "description": "数据列表，每项是一个字典",
+                                "description": "Data list, each item is a dictionary",
                                 "items": {
                                     "type": "object"
                                 }
@@ -427,27 +423,26 @@ class LLMService:
                 }
             }
             advanced_tools.append(data_qa_tool)
-            
-            # 新增工具: 保存到记忆
+              # 新增工具: 保存到记忆
             save_memory_tool = {
                 "type": "function",
                 "function": {
                     "name": "saveToMemory",
-                    "description": "将数据保存到用户记忆中",
+                    "description": "Save data to user memory",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "user_id": {
                                 "type": "string",
-                                "description": "用户ID"
+                                "description": "User ID"
                             },
                             "key": {
                                 "type": "string",
-                                "description": "记忆键名"
+                                "description": "Memory key name"
                             },
                             "value": {
                                 "type": "object",
-                                "description": "记忆值"
+                                "description": "Memory value"
                             }
                         },
                         "required": ["user_id", "key", "value"]
@@ -455,23 +450,22 @@ class LLMService:
                 }
             }
             advanced_tools.append(save_memory_tool)
-            
-            # 新增工具: 从记忆检索
+              # 新增工具: 从记忆检索
             retrieve_memory_tool = {
                 "type": "function",
                 "function": {
                     "name": "retrieveFromMemory",
-                    "description": "从用户记忆中检索数据",
+                    "description": "Retrieve data from user memory",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "user_id": {
                                 "type": "string",
-                                "description": "用户ID"
+                                "description": "User ID"
                             },
                             "key": {
                                 "type": "string",
-                                "description": "记忆键名，如果为空则返回所有记忆"
+                                "description": "Memory key name, if empty returns all memories"
                             }
                         },
                         "required": ["user_id"]
@@ -479,34 +473,32 @@ class LLMService:
                 }
             }
             advanced_tools.append(retrieve_memory_tool)
-            
-            # 新增工具: 创建日程计划
+              # 新增工具: 创建日程计划
             date_plan_tool = {
                 "type": "function",
                 "function": {
                     "name": "createDatePlan",
-                    "description": "创建日程计划",
+                    "description": "Create date plan",
                     "parameters": {
                         "type": "object",
-                        "properties": {
-                            "location": {
+                        "properties": {"location": {
                                 "type": "string",
-                                "description": "地点"
+                                "description": "Location"
                             },
                             "interests": {
                                 "type": "array",
-                                "description": "兴趣列表",
+                                "description": "List of interests",
                                 "items": {
                                     "type": "string"
                                 }
                             },
                             "budget": {
                                 "type": "string",
-                                "description": "预算（可选）"
+                                "description": "Budget (optional)"
                             },
                             "duration": {
                                 "type": "string",
-                                "description": "持续时间（可选）"
+                                "description": "Duration (optional)"
                             }
                         },
                         "required": ["location", "interests"]
@@ -514,30 +506,29 @@ class LLMService:
                 }
             }
             advanced_tools.append(date_plan_tool)
-            
-            # 新增工具: 信息整合
+              # 新增工具: 信息整合
             integrate_info_tool = {
                 "type": "function",
                 "function": {
                     "name": "integrateInformation",
-                    "description": "整合多个信息源并回答问题",
+                    "description": "Integrate multiple information sources and answer questions",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "sources": {
                                 "type": "array",
-                                "description": "信息源列表，每项是一段文本",
+                                "description": "List of information sources, each item is a piece of text",
                                 "items": {
                                     "type": "string"
                                 }
                             },
                             "question": {
                                 "type": "string",
-                                "description": "需要回答的问题"
+                                "description": "Question to be answered"
                             },
                             "format": {
                                 "type": "string",
-                                "description": "输出格式，如'markdown', 'json', 'html'",
+                                "description": "Output format, such as 'markdown', 'json', 'html'",
                                 "default": "markdown"
                             }
                         },
@@ -546,27 +537,26 @@ class LLMService:
                 }
             }
             advanced_tools.append(integrate_info_tool)
-            
-            # 新增工具: 代码生成
+              # 新增工具: 代码生成
             code_gen_tool = {
                 "type": "function",
                 "function": {
                     "name": "generateCode",
-                    "description": "生成代码",
+                    "description": "Generate code",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "requirement": {
                                 "type": "string",
-                                "description": "代码需求描述"
+                                "description": "Code requirement description"
                             },
                             "language": {
                                 "type": "string",
-                                "description": "编程语言，如'python', 'javascript', 'java'"
+                                "description": "Programming language, such as 'python', 'javascript', 'java'"
                             },
                             "framework": {
                                 "type": "string",
-                                "description": "可选的框架，如'react', 'fastapi', 'spring'"
+                                "description": "Optional framework, such as 'react', 'fastapi', 'spring'"
                             }
                         },
                         "required": ["requirement", "language"]
@@ -694,11 +684,13 @@ class LLMService:
             
         Returns:
             模型提供商枚举值
-        """
+        """        
         if model_name in settings.ALLOWED_GEMINI_MODELS:
             return ModelProvider.GEMINI
         elif model_name in settings.ALLOWED_OLLAMA_MODELS:
             return ModelProvider.OLLAMA
+        elif model_name in settings.ALLOWED_NVIDIA_NIM_MODELS:
+            return ModelProvider.NVIDIA_NIM
         else:  # 默认为GitHub模型
             return ModelProvider.GITHUB
 
@@ -769,12 +761,13 @@ class LLMService:
                 
         return user_message
 
-    # MARK: 发送LLM请求    
+    # MARK: 发送LLM请求      
     async def send_llm_request(
         self,
         messages: List[Dict[str, Any]],
         model_name: str,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
+        skip_content_check: bool = False
     ) -> Dict[str, Any]:
         """
         发送LLM请求 - 调用大型语言模型API
@@ -787,34 +780,37 @@ class LLMService:
         Returns:
             API响应结果
         """
-        # 检查消息内容长度，避免token爆炸
-        try:
-            from app.utils.tools import ensure_content_length
-            
-            # 处理用户消息中的内容
-            for i, message in enumerate(messages):
-                if message.get("role") == "user" and "content" in message and isinstance(message["content"], str):
-                    # 对用户消息内容进行长度管理
-                    original_length = len(message["content"])
-                    message["content"] = await ensure_content_length(
-                        content=message["content"],
-                        max_tokens=6000,
-                        context_description="用户消息"
-                    )
-                    
-                    # 如果内容被修改，记录日志
-                    if len(message["content"]) < original_length:
-                        logger.info(f"用户消息已优化，原长度: {original_length}, 优化后: {len(message['content'])}")
-        except Exception as e:
-            logger.warning(f"消息长度管理失败，继续使用原始消息: {str(e)}")
+        # 检查消息内容长度，避免token爆炸（只在非跳过检查时执行）
+        if not skip_content_check:
+            try:
+                from app.utils.tools import ensure_content_length
+                
+                # 处理用户消息中的内容
+                for i, message in enumerate(messages):
+                    if message.get("role") == "user" and "content" in message and isinstance(message["content"], str):
+                        # 对用户消息内容进行长度管理
+                        original_length = len(message["content"])
+                        message["content"] = await ensure_content_length(
+                            content=message["content"],
+                            max_tokens=6000,
+                            context_description="User message"
+                        )
+                        
+                        # 如果内容被修改，记录日志
+                        if len(message["content"]) < original_length:
+                            logger.info(f"用户消息已优化，原长度: {original_length}, 优化后: {len(message['content'])}")
+            except Exception as e:
+                logger.warning(f"消息长度管理失败，继续使用原始消息: {str(e)}")
         
         # 确定模型提供商
-        provider = self._get_model_provider(model_name)
-          # 根据提供商调用相应的请求方法
+        provider = self._get_model_provider(model_name)        
+        # 根据提供商调用相应的请求方法
         if provider == ModelProvider.GEMINI:
             return await self._send_gemini_request(messages, model_name, tools)
         elif provider == ModelProvider.OLLAMA:
             return await self._send_ollama_request(messages, model_name, tools)
+        elif provider == ModelProvider.NVIDIA_NIM:
+            return await self._send_nvidia_nim_request(messages, model_name, tools)
         else:  # 默认使用GitHub模型
             return await self._send_github_request(messages, model_name, tools)
 
@@ -862,7 +858,7 @@ class LLMService:
                     timeout=300.0  # 增加超时时间，确保大型输入有足够处理时间
                 )
                 
-                # 处理错误响应
+                  # 处理错误响应
                 if response.status_code != 200:
                     logger.error(f"GitHub LLM API错误 {response.status_code}: {response.text}")
                     return {"error": f"API错误 {response.status_code}", "detail": response.text}
@@ -1266,6 +1262,81 @@ class LLMService:
         except Exception as e:
             logger.error(f"Ollama请求错误: {str(e)}")
             return {"error": "Ollama请求错误", "detail": str(e)}
+
+    # MARK: 发送NVIDIA NIM请求
+    async def _send_nvidia_nim_request(
+        self,
+        messages: List[Dict[str, Any]],
+        model_name: str,
+        tools: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """
+        发送NVIDIA NIM请求
+        
+        Args:
+            messages: 消息列表
+            model_name: 模型名称
+            tools: 可选的工具定义
+            
+        Returns:
+            API响应结果
+        """
+        try:
+            url = self.nvidia_nim_endpoint
+            headers = {
+                "Authorization": f"Bearer {self.nvidia_nim_api_key}",
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            }
+            
+            # 构建请求体
+            body = {
+                "model": model_name,
+                "messages": messages,
+                "max_tokens": 8192,
+                "temperature": 0.20,
+                "top_p": 0.70,
+                "frequency_penalty": 0.00,
+                "presence_penalty": 0.00,
+                "stream": False  # 使用非流式响应
+            }
+            
+            # 如果有工具定义，将其添加到请求中
+            # NVIDIA NIM支持OpenAI兼容的工具调用格式
+            if tools and model_name not in [m.lower() for m in settings.UNSUPPORTED_TOOL_MODELS]:
+                body["tools"] = tools
+                body["tool_choice"] = "auto"  # 让模型自动决定是否使用工具
+            
+            # 发送请求到NVIDIA NIM
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=body,
+                    timeout=120.0  # NVIDIA NIM的超时时间
+                )
+                
+                # 处理错误响应
+                if response.status_code != 200:
+                    logger.error(f"NVIDIA NIM API错误 {response.status_code}: {response.text}")
+                    return {"error": f"NVIDIA NIM API错误 {response.status_code}", "detail": response.text}
+                
+                # 解析响应
+                nim_response = response.json()
+                
+                # NVIDIA NIM API返回OpenAI兼容格式，可以直接使用
+                logger.info(f"NVIDIA NIM请求成功，模型: {model_name}, 响应长度: {len(nim_response.get('choices', [{}])[0].get('message', {}).get('content', ''))}")
+                return nim_response
+                
+        except httpx.ConnectError as e:
+            logger.error(f"无法连接到NVIDIA NIM服务器 {self.nvidia_nim_endpoint}: {str(e)}")
+            return {"error": "连接NVIDIA NIM服务器失败", "detail": f"请检查网络连接和API端点 {self.nvidia_nim_endpoint}"}
+        except httpx.TimeoutException as e:
+            logger.error(f"NVIDIA NIM请求超时: {str(e)}")
+            return {"error": "NVIDIA NIM请求超时", "detail": "请求处理时间过长，请稍后重试"}
+        except Exception as e:
+            logger.error(f"NVIDIA NIM请求错误: {str(e)}")
+            return {"error": "NVIDIA NIM请求错误", "detail": str(e)}
 
     # MARK: 处理工具调用
     async def handle_tool_call(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

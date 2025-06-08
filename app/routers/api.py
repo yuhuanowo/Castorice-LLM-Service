@@ -66,12 +66,14 @@ async def chat_completion(
     创建聊天完成请求
     
     此端点处理与大型语言模型的对话，支持工具调用、多模态输入和记忆更新
-    """    
-    # 验证模型名称是否在允许列表中（GitHub、Gemini或Ollama模型）
+    """     
+    # 验证模型名称是否在允许列表中（GitHub、Gemini、Ollama或NVIDIA NIM模型）
     if (request.model not in settings.ALLOWED_GITHUB_MODELS and 
         request.model not in settings.ALLOWED_GEMINI_MODELS and 
-        request.model not in settings.ALLOWED_OLLAMA_MODELS):
-        all_models = settings.ALLOWED_GITHUB_MODELS + settings.ALLOWED_GEMINI_MODELS + settings.ALLOWED_OLLAMA_MODELS
+        request.model not in settings.ALLOWED_OLLAMA_MODELS and
+        request.model not in settings.ALLOWED_NVIDIA_NIM_MODELS):
+        all_models = (settings.ALLOWED_GITHUB_MODELS + settings.ALLOWED_GEMINI_MODELS + 
+                     settings.ALLOWED_OLLAMA_MODELS + settings.ALLOWED_NVIDIA_NIM_MODELS)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"模型 {request.model} 不受支持。支持的模型: {', '.join(all_models)}"
@@ -291,12 +293,38 @@ async def chat_completion(
         
         user_result = add_message_to_session(session_id, request.user_id, user_message, request.model)
         
-        # 添加助手回复到会话
+        # 添加助手回复到会话 - 包含基礎對話的增強信息
         assistant_message = {
             "id": str(uuid.uuid4()),
             "role": "assistant", 
             "content": message,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            
+            # 基礎對話模式標識
+            "mode": "llm",
+            "model_used": request.model,
+            
+            # 工具調用信息（如果有）
+            "tool_calls": tool_calls if tool_calls else None,
+            
+            # 圖片生成支持
+            "image_data_uri": image_data_uri if image_data_uri else None,
+            
+            # 完整原始響應數據（用於JSON按鈕）- 基礎結構
+            "raw_response": {
+                "success": True,
+                "interaction_id": interaction_id,
+                "response": response,
+                "tool_calls": tool_calls,
+                "image_data_uri": image_data_uri,
+                "execution_time": 0,  # 基礎對話沒有明確的執行時間
+                "steps_taken": 1,     # 基礎對話算作1步
+                "meta": {
+                    "model": request.model,
+                    "user_id": request.user_id,
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
         }
         
         assistant_result = add_message_to_session(session_id, request.user_id, assistant_message, request.model)
@@ -305,13 +333,13 @@ async def chat_completion(
             logger.info(f"消息已保存到会话: session_id={session_id}")
         else:
             logger.error(f"保存消息到会话失败: user_result={user_result}, assistant_result={assistant_result}")
-            
-        # 如果会话的第一条消息，生成标题
+              # 如果会话的第一条消息，智能生成标题
         session = get_chat_session(session_id, request.user_id)
         if session and session.get('message_count', 0) <= 2:  # 第一轮对话（用户+助手=2条消息）
-            title = user_message_content[:30] + ("..." if len(user_message_content) > 30 else "")
-            update_session_title(session_id, request.user_id, title)
-            logger.info(f"已为会话生成标题: {title}")
+            # 使用智能標題生成
+            smart_title = await generate_smart_title(user_message_content, message)
+            update_session_title(session_id, request.user_id, smart_title)
+            logger.info(f"已为会话智能生成标题: {smart_title}")
             
     else:
         # 保持原有的兼容性逻辑
@@ -338,15 +366,42 @@ async def chat_completion(
     # 在后台异步更新用户长期记忆
     prompt = user_message_content
     asyncio.create_task(background_memory_update(request.user_id, prompt))
-    logger.info(f"记忆更新任务已在后台启动，用户ID: {request.user_id}")
-    
-    # 返回完整响应
+    logger.info(f"记忆更新任务已在后台启动，用户ID: {request.user_id}")    
+    # 返回完整响应 - 與 Agent 模式保持一致的增強結構
     return {
         "message": message,
         "model": request.model,
         "usage": usage,
         "tool_calls": tool_calls,
-        "image_data_uri": image_data_uri  # 包含图片数据URI
+        "image_data_uri": image_data_uri,  # 包含图片数据URI
+        
+        # 基礎對話增強信息（與 Agent 模式保持結構一致）
+        "mode": "llm",
+        "model_used": request.model,
+        "execution_time": 0,  # 基礎對話沒有明確的執行時間
+        "steps_taken": 1,     # 基礎對話算作1步
+        "generated_image": image_data_uri,  # 保持與 Agent 模式的一致性
+        
+        # 空的增強信息字段（保持結構一致）
+        "execution_trace": [],
+        "reasoning_steps": [],
+        "tools_used": [],
+        
+        # 完整原始響應數據（用於JSON按鈕）
+        "raw_response": {
+            "success": True,
+            "interaction_id": interaction_id,
+            "response": response,
+            "tool_calls": tool_calls,
+            "image_data_uri": image_data_uri,
+            "execution_time": 0,
+            "steps_taken": 1,
+            "meta": {
+                "model": request.model,
+                "user_id": request.user_id,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
     }
 
 # MARK: Get User Memory
@@ -774,6 +829,17 @@ async def get_model_list(
                     capabilities=["chat", "text-generation"]
                 ))
         
+        # NVIDIA NIM 模型
+        if not provider or provider.lower() == "nvidia_nim":
+            for model_id in settings.ALLOWED_NVIDIA_NIM_MODELS:
+                models.append(schemas.ModelInfo(
+                    model_id=model_id,
+                    model_name=model_id,
+                    provider="nvidia_nim",
+                    description="NVIDIA NIM AI模型",
+                    capabilities=["chat", "text-generation"]
+                ))
+        
         return schemas.ModelListResponse(
             models=models,
             total_count=len(models)
@@ -831,7 +897,7 @@ async def stream_chat(
             try:
                 # 這裡應該調用實際的流式API
                 # 目前使用非流式API模擬流式輸出
-                system_prompt = llm_service.get_system_prompt(request.model, "zh")
+                system_prompt = llm_service.get_system_prompt(request.model)
                 
                 # 構建消息
                 messages = []
@@ -1062,10 +1128,17 @@ async def delete_session_endpoint(
                 "message": "会话删除成功"
             }
         else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"删除会话失败: {result.get('error', '未知错误')}"
-            )
+            # 如果会话不存在，返回404而不是400
+            if result.get("error") == "会话不存在":
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="会话不存在"
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"删除会话失败: {result.get('error', '未知错误')}"
+                )
     except HTTPException:
         raise
     except Exception as e:
@@ -1144,3 +1217,61 @@ async def get_session_images_list(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取会话图片列表失败: {str(e)}"
         )
+
+# 智能標題生成函數
+async def generate_smart_title(user_prompt: str, assistant_response: str) -> str:
+    """
+    使用超小模型生成智能對話標題
+    """
+    try:        # 構建標題生成的提示
+        title_prompt = f"""Based on the following conversation, generate a concise title (maximum 30 characters) in the same language as the conversation:
+
+                            User: {user_prompt[:100]}
+                            Assistant: {assistant_response[:100]}
+
+                            Requirements:
+                            1. Title should summarize the main content of the conversation
+                            2. Use the same language as the conversation, maximum 30 characters
+                            3. No punctuation marks
+                            4. Return only the title, no other content
+
+                            Title:"""
+
+        # 構建消息格式
+        messages = [
+            {"role": "user", "content": title_prompt}
+        ]
+
+        # 使用最小的模型來生成標題（減少成本和延遲）
+        title_response = await llm_service.send_llm_request(
+            messages=messages,
+            model_name="gemma-3-27b-it",  # 使用極小最快的模型
+            tools=None  # 不需要工具
+        )
+        
+        # 提取生成的標題
+        if (title_response and 
+            "choices" in title_response and 
+            len(title_response["choices"]) > 0 and
+            "message" in title_response["choices"][0] and
+            "content" in title_response["choices"][0]["message"]):
+            
+            generated_title = title_response["choices"][0]["message"]["content"].strip()
+            
+            # 確保標題不超過15個字
+            if len(generated_title) > 30:
+                generated_title = generated_title[:30]
+
+            logger.info(f"智能生成標題: {generated_title}")
+            return generated_title
+        else:
+            # 如果生成失敗，回退到簡單截取方式
+            fallback_title = user_prompt[:30] + ("..." if len(user_prompt) > 30 else "")
+            logger.warning(f"智能標題生成失敗，使用回退方式: {fallback_title}")
+            return fallback_title
+            
+    except Exception as e:
+        # 如果出現任何錯誤，回退到簡單截取方式
+        fallback_title = user_prompt[:30] + ("..." if len(user_prompt) > 30 else "")
+        logger.error(f"智能標題生成錯誤: {str(e)}，使用回退方式: {fallback_title}")
+        return fallback_title

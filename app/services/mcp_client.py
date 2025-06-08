@@ -355,7 +355,7 @@ class MCPClient:
                     "env": {},
                     "enabled": True,
                     "timeout": 30,
-                    "description": "文件系统访问服务器，允许读取和写入指定目录下的文件"
+                    "description": "File system access server, allows reading and writing files in specified directories"
                 },
                 "github": {
                     "command": npm_cmd, 
@@ -365,7 +365,7 @@ class MCPClient:
                     },
                     "enabled": False,
                     "timeout": 30,
-                    "description": "GitHub API集成服务器，提供仓库搜索、文件读取等功能"
+                    "description": "GitHub API integration server, provides repository search, file reading and other functions"
                 },
                 "web-search": {
                     "command": npm_cmd,
@@ -375,17 +375,16 @@ class MCPClient:
                     },
                     "enabled": False,
                     "timeout": 30,
-                    "description": "网络搜索服务器，使用Brave搜索引擎"
+                    "description": "Web search server using Brave search engine"
                 }
             },
             "settings": {
                 "auto_init": True,
                 "default_timeout": 30,
                 "max_connections": 10
-            },
-            "description": "MCP服务器配置文件。要启用服务器，请将enabled设置为true并配置相应的环境变量。\n" +
-                          "对于Windows系统，请使用npm.cmd而不是npm。\n" + 
-                          "使用此配置前，请确保已经全局安装相关的MCP服务器包，例如：\n" +
+            },            "description": "MCP server configuration file. To enable servers, set enabled to true and configure corresponding environment variables.\n" +
+                          "For Windows systems, use npm.cmd instead of npm.\n" + 
+                          "Before using this configuration, make sure you have globally installed the relevant MCP server packages, for example:\n" +
                           "npm install -g @modelcontextprotocol/server-filesystem"
         }
         
@@ -914,48 +913,51 @@ class MCPClient:
         except Exception as e:
             logger.error(f"从服务器 {server_name} 列出工具失败: {e}")
             return self._get_sample_tools(server_name)
-            if server_name == "filesystem":
-                return [
-                    MCPTool(
-                        name="read_file",
-                        description="读取文件内容",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "path": {"type": "string", "description": "文件路径"}
-                            },
-                            "required": ["path"]
-                        }
-                    ),
-                    MCPTool(
-                        name="list_directory",
-                        description="列出目录内容",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "path": {"type": "string", "description": "目录路径"}
-                            },
-                            "required": ["path"]
-                        }
-                    )
-                ]
-            elif server_name == "github":
-                return [
-                    MCPTool(
-                        name="search_repositories",
-                        description="搜索GitHub仓库",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "query": {"type": "string", "description": "搜索查询"},
-                                "language": {"type": "string", "description": "编程语言过滤"}
-                            },
-                            "required": ["query"]
-                        }
-                    )
-                ]
-            else:
-                return []
+    
+    def _get_sample_tools(self, server_name: str) -> List[MCPTool]:
+        """获取示例工具（当无法动态发现时的回退）"""
+        if server_name == "filesystem":
+            return [
+                MCPTool(
+                    name="read_file",
+                    description="Read file content",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "File path"}
+                        },
+                        "required": ["path"]
+                    }
+                ),
+                MCPTool(
+                    name="list_directory",
+                    description="List directory content",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "Directory path"}
+                        },
+                        "required": ["path"]
+                    }
+                )
+            ]
+        elif server_name == "github":
+            return [
+                MCPTool(
+                    name="search_repositories",
+                    description="Search GitHub repositories",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Search query"},
+                            "language": {"type": "string", "description": "Programming language filter"}
+                        },
+                        "required": ["query"]
+                    }
+                )
+            ]
+        else:
+            return []
     async def _list_resources(self, server_name: str) -> List[MCPResource]:
         """列出服务器可用资源 - 通过MCP协议动态发现"""
         if server_name not in self.active_sessions:
@@ -1347,56 +1349,10 @@ class MCPClient:
             return {
                 "success": True,
                 "info": system_info
-            }
-            
+            }            
         except Exception as e:
             logger.error(f"获取服务器信息失败: {e}")
             return {"success": False, "error": str(e)}
-            
-    def _get_sample_tools(self, server_name: str) -> List[MCPTool]:
-        """获取示例工具（当服务器连接失败时用作备用）"""
-        if server_name == "filesystem":
-            return [
-                MCPTool(
-                    name="read_file",
-                    description="读取文件内容",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string", "description": "文件路径"}
-                        },
-                        "required": ["path"]
-                    }
-                ),
-                MCPTool(
-                    name="list_directory",
-                    description="列出目录内容",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string", "description": "目录路径"}
-                        },
-                        "required": ["path"]
-                    }
-                )
-            ]
-        elif server_name == "github":
-            return [
-                MCPTool(
-                    name="search_repositories",
-                    description="搜索GitHub仓库",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string", "description": "搜索查询"},
-                            "language": {"type": "string", "description": "编程语言过滤"}
-                        },
-                        "required": ["query"]
-                    }
-                )
-            ]
-        else:
-            return []
         
     def get_available_tools(self) -> Dict[str, MCPTool]:
         """获取所有可用工具"""

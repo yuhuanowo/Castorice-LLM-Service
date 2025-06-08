@@ -5,8 +5,15 @@ from bson import ObjectId
 from app.core.config import get_settings
 import gridfs
 import io
+import logging
+import time
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+# 用于避免重复删除警告的缓存
+_delete_warning_cache = {}
+_cache_ttl = 60  # 缓存有效期60秒
 
 # 同步客户端（用于需要同步操作的地方）
 sync_client = MongoClient(settings.MONGODB_URL)
@@ -247,16 +254,52 @@ def create_chat_session(user_id: str, session_id: str, title: str = "新对话")
 
 
 def add_message_to_session(session_id: str, user_id: str, message: dict, model: str = None):
-    """向会话中添加消息"""
+    """向会话中添加消息 - 支持增強信息存儲"""
     try:
+        # 構建基礎消息結構
+        message_to_store = {
+            "id": message.get("id", str(datetime.now().timestamp())),
+            "role": message.get("role"),
+            "content": message.get("content"),
+            "timestamp": message.get("timestamp", datetime.now().isoformat())
+        }
+        
+        # 添加增強信息（Agent 模式和基礎對話都支持）
+        # Agent 模式專用字段
+        if message.get("mode"):
+            message_to_store["mode"] = message.get("mode")
+        if message.get("model_used"):
+            message_to_store["model_used"] = message.get("model_used")
+        if message.get("execution_time") is not None:
+            message_to_store["execution_time"] = message.get("execution_time")
+        if message.get("steps_taken") is not None:
+            message_to_store["steps_taken"] = message.get("steps_taken")
+            
+        # UI 展示增強信息
+        if message.get("execution_trace"):
+            message_to_store["execution_trace"] = message.get("execution_trace")
+        if message.get("reasoning_steps"):
+            message_to_store["reasoning_steps"] = message.get("reasoning_steps")
+        if message.get("tools_used"):
+            message_to_store["tools_used"] = message.get("tools_used")
+            
+        # 圖片生成支持
+        if message.get("generated_image"):
+            message_to_store["generated_image"] = message.get("generated_image")
+            
+        # 完整原始響應數據（用於 JSON 按鈕）
+        if message.get("raw_response"):
+            message_to_store["raw_response"] = message.get("raw_response")
+            
+        # 基礎對話增強字段（工具調用等）
+        if message.get("tool_calls"):
+            message_to_store["tool_calls"] = message.get("tool_calls")
+        if message.get("image_data_uri"):
+            message_to_store["image_data_uri"] = message.get("image_data_uri")
+        
         # 准备更新数据
         update_data = {
-            "$push": {"messages": {
-                "id": message.get("id", str(datetime.now().timestamp())),
-                "role": message.get("role"),
-                "content": message.get("content"),
-                "timestamp": message.get("timestamp", datetime.now().isoformat())
-            }},
+            "$push": {"messages": message_to_store},
             "$set": {"updated_at": datetime.now()},
             "$inc": {"message_count": 1}
         }
@@ -356,9 +399,26 @@ def delete_chat_session(session_id: str, user_id: str):
         
         if result.deleted_count > 0:
             logger.info(f"会话删除成功: session_id={session_id}")
+            # 清除缓存中的记录
+            cache_key = f"{session_id}_{user_id}"
+            if cache_key in _delete_warning_cache:
+                del _delete_warning_cache[cache_key]
             return {"success": True, "deleted_count": result.deleted_count}
         else:
-            logger.warning(f"会话不存在或删除失败: session_id={session_id}")
+            # 使用缓存避免重复警告
+            cache_key = f"{session_id}_{user_id}"
+            current_time = time.time()
+            
+            # 清理过期的缓存
+            expired_keys = [k for k, v in _delete_warning_cache.items() if current_time - v > _cache_ttl]
+            for k in expired_keys:
+                del _delete_warning_cache[k]
+            
+            # 检查是否已经记录过这个警告
+            if cache_key not in _delete_warning_cache:
+                logger.warning(f"会话不存在或删除失败: session_id={session_id}")
+                _delete_warning_cache[cache_key] = current_time
+            
             return {"success": False, "error": "会话不存在"}
             
     except Exception as e:

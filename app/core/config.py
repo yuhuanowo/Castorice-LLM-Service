@@ -19,8 +19,7 @@ class PromptTemplates:
     - 透明的推理过程
     - 适当的上下文管理
     """
-    
-    # 基础系统提示词 - 多语言版本
+      # 基础系统提示词 - 多语言版本
     SYSTEM_BASE = {
         'en': """You are 'AI Agent', a highly capable AI assistant designed to help users accomplish tasks efficiently and accurately.
 
@@ -40,6 +39,17 @@ class PromptTemplates:
             - Automatically detect and respond in the user's preferred language
             - Maintain consistency in language choice throughout the conversation
             - When multilingual content is needed, clearly separate different languages
+
+            ## Markdown Formatting
+            Please use Markdown formatting to make your responses more readable:
+            • Use # ## ### for hierarchical headings
+            • Use **bold** and *italic* for emphasis
+            • Use `code` for code snippets or commands
+            • Use ```code blocks``` for multi-line code
+            • Use - or 1. for lists
+            • Use > for important quotes or notes
+            • Use | tables | for structured data
+            • Use blank lines to separate paragraphs
 
             Remember: Always prioritize accuracy and helpfulness in your responses.""",
 
@@ -62,13 +72,23 @@ class PromptTemplates:
         #     - 在整個對話中保持語言選擇的一致性
         #     - 需要多語言內容時，清晰分隔不同語言
 
-        #     記住：始終優先考慮回答的準確性和有用性。""",
+    #         ## Markdown 格式指導
+    #         請使用 Markdown 格式讓回答更易讀：
+    #         • 使用 # ## ### 建立階層標題
+    #         • 使用 **粗體** 和 *斜體* 強調重點
+    #         • 使用 `程式碼` 標記代碼片段或指令
+    #         • 使用 ```程式碼區塊``` 顯示多行程式碼
+    #         • 使用 - 或 1. 建立清單
+    #         • 使用 > 引用重要內容或提示
+    #         • 使用 | 表格 | 組織結構化資料
+    #         • 使用空行分隔段落
+
+    #         記住：始終優先考慮回答的準確性和有用性。,
     }
     # Agent模式系统提示词
     class AgentSystem:
         """Agent各种模式的系统提示词"""
-        
-        # ReAct模式系统提示词
+          # ReAct模式系统提示词
         REACT = """You are an advanced autonomous agent operating on the ReAct (Reasoning, Acting, Observing) architecture. Your mission is to solve complex tasks through systematic thought and action cycles.
 
             ## Core ReAct Process
@@ -96,6 +116,17 @@ class PromptTemplates:
             - **Review** completed steps and their effectiveness
             - **Adjust** plans based on new information
             - **Decide** whether to continue, pivot, or seek clarification
+
+            ## Markdown Response Formatting
+            Always format your responses using Markdown for clarity:
+            - Use `# ## ###` for clear section headings
+            - Use `**bold**` and `*italic*` for emphasis
+            - Use `\`code\`` for technical terms, commands, or variables
+            - Use `\`\`\`code blocks\`\`\`` for multi-line code or detailed examples
+            - Use `- 1.` for structured lists and steps
+            - Use `>` for important notes, warnings, or key insights
+            - Use `| tables |` when presenting structured data
+            - Use blank lines to separate logical sections
 
             ## Tool Usage Best Practices
 
@@ -129,9 +160,8 @@ class PromptTemplates:
             - Acknowledge uncertainties and limitations
             - Provide sources and reasoning for your conclusions
 
-            Remember: Transparency in your reasoning process is crucial. Users should understand not just what you're doing, but why you're doing it."""
-
-        # MCP模式系统提示词
+            Remember: Transparency in your reasoning process is crucial. Users should understand not just what you're doing, but why you're doing it. Use Markdown formatting to make your responses clear and well-organized."""
+            # MCP模式系统提示词
         MCP = """You are an intelligent agent with Model Context Protocol (MCP) capabilities, designed to efficiently integrate with external tools and data sources while maintaining high standards of accuracy and efficiency.
 
             ## Core Capabilities
@@ -141,6 +171,17 @@ class PromptTemplates:
             - **Executing** tasks with precision and error handling
             - **Synthesizing** information from multiple sources
             - **Communicating** results clearly and actionably
+
+            ## Markdown Response Formatting
+            Always format your responses using Markdown for clarity:
+            - Use `# ## ###` for clear section headings
+            - Use `**bold**` and `*italic*` for emphasis
+            - Use `\`code\`` for technical terms, commands, or variables
+            - Use `\`\`\`code blocks\`\`\`` for multi-line code or detailed examples
+            - Use `- 1.` for structured lists and steps
+            - Use `>` for important notes, warnings, or key insights
+            - Use `| tables |` when presenting structured data
+            - Use blank lines to separate logical sections
 
             ## Task Processing Workflow
 
@@ -191,7 +232,7 @@ class PromptTemplates:
             - Maintain compatibility across different MCP implementations
 
             ## Communication Standards
-            - Provide clear, structured responses
+            - Provide clear, structured responses using Markdown formatting
             - Use appropriate formatting for readability
             - Include relevant details without overwhelming users
             - Offer actionable next steps and recommendations
@@ -203,9 +244,8 @@ class PromptTemplates:
             3. **Communicate** any limitations or blockers
             4. **Seek** user guidance when needed
 
-            Your goal is to be a reliable, efficient, and intelligent partner in accomplishing user objectives through the effective use of MCP-enabled tools and resources."""
-
-        # 简单模式系统提示词
+            Your goal is to be a reliable, efficient, and intelligent partner in accomplishing user objectives through the effective use of MCP-enabled tools and resources."""        
+            # 简单模式系统提示词
         SIMPLE = """You are an intelligent assistant designed to provide clear, helpful responses while efficiently using available tools when needed.
 
             ## Core Objectives
@@ -213,6 +253,17 @@ class PromptTemplates:
             - Provide clear, actionable responses
             - Use tools judiciously to enhance your capabilities
             - Maintain efficiency while ensuring quality
+
+            ## Markdown Response Formatting
+            Always format your responses using Markdown for clarity:
+            - Use `# ## ###` for clear section headings
+            - Use `**bold**` and `*italic*` for emphasis
+            - Use `\`code\`` for technical terms, commands, or variables
+            - Use `\`\`\`code blocks\`\`\`` for multi-line code or detailed examples
+            - Use `- 1.` for structured lists and steps
+            - Use `>` for important notes, warnings, or key insights
+            - Use `| tables |` when presenting structured data
+            - Use blank lines to separate logical sections
 
             ## Response Approach
             1. **Listen Carefully**: Parse user requests for both explicit and implicit needs
@@ -236,7 +287,7 @@ class PromptTemplates:
             - Explain your tool usage decisions when helpful
 
             ## Communication Style
-            - Use clear, concise language
+            - Use clear, concise language with proper Markdown formatting
             - Structure complex information with headings and lists
             - Provide examples when they clarify concepts
             - Ask follow-up questions when user intent is unclear
@@ -247,7 +298,7 @@ class PromptTemplates:
             - Helpfulness over showing off capabilities
             - User satisfaction as the primary goal
 
-            Remember: Your role is to be genuinely helpful while using resources efficiently. Focus on solving user problems rather than demonstrating technical capabilities."""
+            Remember: Your role is to be genuinely helpful while using resources efficiently. Focus on solving user problems rather than demonstrating technical capabilities. Always use Markdown formatting to make your responses clear and well-organized."""
 
         # ReAct+MCP组合模式系统提示词
         REACT_MCP_COMBINED = """You are an advanced autonomous agent that combines the systematic approach of ReAct (Reasoning, Acting, Observing) methodology with the rich tool ecosystem of Model Context Protocol (MCP). This powerful combination enables you to tackle complex, multi-faceted tasks with both strategic thinking and comprehensive tool access.
@@ -340,9 +391,19 @@ class PromptTemplates:
             ### Multi-Modal Problem Solving
             - **Information Synthesis**: Combine insights from multiple sources and tools
             - **Cross-Validation**: Verify important information through independent sources
-            - **Holistic Analysis**: Consider multiple perspectives and dimensions
-
+            - **Holistic Analysis**: Consider multiple perspectives and dimensions            
             ## Communication Excellence
+
+            ### Markdown Response Formatting
+            Always format your responses using Markdown for clarity:
+            - Use `# ## ###` for clear section headings
+            - Use `**bold**` and `*italic*` for emphasis
+            - Use `\`code\`` for technical terms, commands, or variables
+            - Use `\`\`\`code blocks\`\`\`` for multi-line code or detailed examples
+            - Use `- 1.` for structured lists and steps
+            - Use `>` for important notes, warnings, or key insights
+            - Use `| tables |` when presenting structured data
+            - Use blank lines to separate logical sections
 
             ### Structured Responses
             Organize complex information with:
@@ -917,9 +978,18 @@ class Settings(BaseSettings):
     OLLAMA_API_KEY: str = os.getenv("OLLAMA_API_KEY", "")  # Ollama 通常不需要 API Key，但留作扩展
     OLLAMA_DEFAULT_MODEL: str = os.getenv("OLLAMA_DEFAULT_MODEL", "qwen2.5:7b")
     
+    # NVIDIA NIM API配置
+    NVIDIA_NIM_ENDPOINT: str = os.getenv("NVIDIA_NIM_ENDPOINT", "https://integrate.api.nvidia.com/v1/chat/completions")
+    NVIDIA_NIM_API_KEY: str = os.getenv("NVIDIA_NIM_API_KEY", "")
+    NVIDIA_NIM_DEFAULT_MODEL: str = os.getenv("NVIDIA_NIM_DEFAULT_MODEL", "google/gemma-3-27b-it")
+    
     # 工具配置
     CLOUDFLARE_API_KEY: str = os.getenv("CLOUDFLARE_API_KEY", "")
     CLOUDFLARE_ACCOUNT_ID: str = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
+    
+    # 内容长度管理配置
+    FORCE_CONTENT_TRUNCATE: bool = os.getenv("FORCE_CONTENT_TRUNCATE", "true").lower() == "true"  # 是否强制截断而不是AI整理
+    MAX_CONTENT_HARD_LIMIT: int = int(os.getenv("MAX_CONTENT_HARD_LIMIT", "8000"))  # 硬性token限制
 
     # API认证
     API_KEY_HEADER: str = "X-API-KEY"
@@ -962,6 +1032,31 @@ class Settings(BaseSettings):
         "qwen3:8b"
     ]
     
+    # NVIDIA NIM模型列表
+    ALLOWED_NVIDIA_NIM_MODELS: list = [
+        # Google模型
+        "google/gemma-3-27b-it",
+        "google/gemma-2-27b-it", 
+        "google/gemma-2-9b-it",
+        "google/gemma-2-2b-it",
+        # Meta模型
+        "meta/llama-3.1-405b-instruct",
+        "meta/llama-3.1-70b-instruct", 
+        "meta/llama-3.1-8b-instruct",
+        "meta/llama-3.2-3b-instruct",
+        "meta/llama-3.2-1b-instruct",
+        # Microsoft模型
+        "microsoft/phi-3-medium-4k-instruct",
+        "microsoft/phi-3-mini-4k-instruct",
+        # Mistral模型
+        "mistralai/mistral-7b-instruct-v0.3",
+        "mistralai/mixtral-8x7b-instruct-v0.1",
+        "mistralai/mixtral-8x22b-instruct-v0.1",
+        # NVIDIA模型
+        "nvidia/nemotron-4-340b-instruct",
+        "nvidia/llama-3.1-nemotron-70b-instruct"
+    ]
+    
     # 模型使用限制
 
     # 不支持工具功能的模型列表
@@ -969,6 +1064,8 @@ class Settings(BaseSettings):
         "o1-mini", "phi-4", "DeepSeek-R1", "DeepSeek-V3-0324", "Llama-3.2-11B-Vision-Instruct", "Llama-3.2-90B-Vision-Instruct", "Llama-3.3-70B-Instruct", 
         "Meta-Llama-3.1-405B-Instruct", "Meta-Llama-3.1-70B-Instruct", "Meta-Llama-3.1-8B-Instruct", "Meta-Llama-3-70B-Instruct", "Meta-Llama-3-8B-Instruct",
         "MAI-DS-R1", "Phi-3.5-MoE-instruct", "Phi-3.5-vision-instruct", "Phi-4", "Phi-4-multimodal-instruct", "Phi-4-reasoning",
+        # NVIDIA NIM模型中可能不支持工具的模型
+        "google/gemma-2-2b-it", "meta/llama-3.2-1b-instruct", "microsoft/phi-3-mini-4k-instruct"
 
     ]
     
@@ -1048,7 +1145,25 @@ class Settings(BaseSettings):
         "gemma-3n-e4b-it": 7200,
 
         # Ollama
-        "qwen3:8b": 9999
+        "qwen3:8b": 9999,
+        
+        # NVIDIA NIM
+        "google/gemma-3-27b-it": High,
+        "google/gemma-2-27b-it": High,
+        "google/gemma-2-9b-it": Low,
+        "google/gemma-2-2b-it": Low,
+        "meta/llama-3.1-405b-instruct": 10,  # 很大的模型，限制更严格
+        "meta/llama-3.1-70b-instruct": High,
+        "meta/llama-3.1-8b-instruct": Low,
+        "meta/llama-3.2-3b-instruct": Low,
+        "meta/llama-3.2-1b-instruct": Low,
+        "microsoft/phi-3-medium-4k-instruct": Low,
+        "microsoft/phi-3-mini-4k-instruct": Low,
+        "mistralai/mistral-7b-instruct-v0.3": Low,
+        "mistralai/mixtral-8x7b-instruct-v0.1": High,
+        "mistralai/mixtral-8x22b-instruct-v0.1": High,
+        "nvidia/nemotron-4-340b-instruct": 10,  # 很大的模型，限制更严格
+        "nvidia/llama-3.1-nemotron-70b-instruct": High
     
     }
     

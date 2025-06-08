@@ -5,7 +5,7 @@ import React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
-import { Send, Plus, User, Bot, Copy, PanelLeft, ChevronDown, ArrowUp, ArrowDown, Trash2, Code } from 'lucide-react'
+import { Send, Plus, User, Bot, Copy, PanelLeft, ChevronDown, ArrowUp, ArrowDown, Trash2, Code, Clock, Zap, Brain, Eye, Search, Wrench, Image, FileText, Loader, CheckCircle, XCircle, AlertCircle, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
@@ -22,6 +22,32 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+  // Agent 模式增强字段
+  execution_trace?: Array<{
+    step: number
+    action: string
+    status: 'planning' | 'executing' | 'completed' | 'failed'
+    timestamp: string
+    details?: any
+  }>
+  reasoning_steps?: Array<{
+    type: 'thought' | 'action' | 'observation' | 'reflection'
+    content: string
+    timestamp: string
+  }>
+  tools_used?: Array<{
+    name: string
+    result: string
+    duration?: number
+  }>
+  // 元数据
+  model_used?: string
+  mode?: 'llm' | 'agent' | 'chat'  // 支持新的 llm 模式，保留 chat 兼容性
+  execution_time?: number
+  steps_taken?: number
+  generated_image?: string
+  // 錯誤詳情（用於JSON按鈕顯示）
+  error_details?: any
 }
 
 interface Model {
@@ -37,7 +63,8 @@ interface ChatHistory {
   timestamp: string
 }
 
-export default function ModernChatGPT() {  const [messages, setMessages] = useState<Message[]>([])
+export default function ModernChatGPT() {
+  const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [selectedModel, setSelectedModel] = useState('gemini-2.0-flash-lite')
@@ -58,69 +85,121 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
   const [useAgent, setUseAgent] = useState(false)
   const [enableMemory, setEnableMemory] = useState(true)
   const [enableReflection, setEnableReflection] = useState(true)
-  const [enableReactMode, setEnableReactMode] = useState(true)
-  // API connection status
+  const [enableReactMode, setEnableReactMode] = useState(true)  // API connection status
   const [apiStatus, setApiStatus] = useState<'connected' | 'disconnected' | 'testing'>('disconnected')
+
   // Raw JSON responses for debugging
   const [rawResponses, setRawResponses] = useState<{[messageId: string]: any}>({})
-  const [expandedJson, setExpandedJson] = useState<{[messageId: string]: boolean}>({})  // Auto-scroll and scroll detection
+  const [expandedJson, setExpandedJson] = useState<{[messageId: string]: boolean}>({})
+  
+  // Agent状态显示增强
+  const [showAgentDetails, setShowAgentDetails] = useState<{[messageId: string]: boolean}>({})
+  const [showReasoningSteps, setShowReasoningSteps] = useState<{[messageId: string]: boolean}>({})
+  const [showExecutionTrace, setShowExecutionTrace] = useState<{[messageId: string]: boolean}>({})
+  const [showToolDetails, setShowToolDetails] = useState<{[messageId: string]: boolean}>({})
+  
+  // 性能和统计信息
+  const [messageStats, setMessageStats] = useState<{[messageId: string]: {
+    processingTime?: number
+    tokenCount?: number
+    modelUsed?: string
+    toolsCount?: number
+    memoryUsed?: boolean
+    mcpToolsUsed?: string[]
+    responseSize?: number
+  }}>({})
+  
+  // 显示增强控制
+  const [compactMode, setCompactMode] = useState(false)
+  const [showTimestamps, setShowTimestamps] = useState(true)
+  const [showModelInfo, setShowModelInfo] = useState(true)
+  const [showPerformanceMetrics, setShowPerformanceMetrics] = useState(false)
+  
+  // Agent模式的实时状态追踪
+  const [agentStatus, setAgentStatus] = useState<{[messageId: string]: {
+    currentStep?: string
+    totalSteps?: number
+    isReflecting?: boolean
+    toolsInUse?: string[]
+    memoryActive?: boolean
+  }}>({})
+  
+  // LLM服务调用统计
+  const [llmStats, setLlmStats] = useState({
+    totalCalls: 0,
+    totalTokens: 0,
+    avgResponseTime: 0,
+    successRate: 0,
+    failureCount: 0
+  })// Auto-scroll and scroll detection
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [])
-
   // 使用防抖函数处理滚动检测，减少不必要的状态更新
   const debouncedCheckScrollPosition = useCallback(() => {
-    let timeoutId: NodeJS.Timeout | null = null;
-    
-    return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
+    if (scrollContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100
       
-      timeoutId = setTimeout(() => {
-        if (scrollContainerRef.current) {
-          const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current
-          const isNearBottom = scrollHeight - scrollTop - clientHeight < 100
-          setIsAtBottom(isNearBottom)
-          setShowScrollToBottom(!isNearBottom && messages.length > 0)
+      // 只在狀態真正變化時才更新，避免不必要的重新渲染
+      setIsAtBottom(prev => {
+        if (prev !== isNearBottom) {
+          console.log('📍 Scroll position changed:', isNearBottom ? 'at bottom' : 'not at bottom')
+          return isNearBottom
         }
-        timeoutId = null;
-      }, 100); // 100ms防抖延迟
-    };
-  }, [messages.length]);
-
-  // 使用useRef保存防抖函数，避免每次渲染都创建新的函数
-  const checkScrollPositionRef = useRef(debouncedCheckScrollPosition());
+        return prev
+      })
+      
+      setShowScrollToBottom(prev => {
+        const newValue = !isNearBottom && messages.length > 0
+        if (prev !== newValue) {
+          return newValue
+        }
+        return prev
+      })
+    }
+  }, [messages.length])  // 直接使用防抖函數的引用
+  const checkScrollPositionRef = useRef(debouncedCheckScrollPosition)
   
+  // 更新引用以確保總是使用最新的防抖函數
   useEffect(() => {
-    // 更新防抖函数引用
-    checkScrollPositionRef.current = debouncedCheckScrollPosition();
-  }, [debouncedCheckScrollPosition]);
-
+    checkScrollPositionRef.current = debouncedCheckScrollPosition
+  }, [debouncedCheckScrollPosition])
   useEffect(() => {
     if (isAtBottom) {
       scrollToBottom()
     }
-  }, [messages, isAtBottom, scrollToBottom])
-
+  }, [messages.length, isAtBottom, scrollToBottom]) // 只依賴於消息數量而不是整個消息數組
+  
   useEffect(() => {
     const scrollElement = scrollContainerRef.current
     if (scrollElement) {
+      // 創建一個穩定的處理函數，避免引用問題
+      const handleScroll = () => {
+        checkScrollPositionRef.current()
+      }
+      
       // 使用passive: true优化滚动性能
-      scrollElement.addEventListener('scroll', checkScrollPositionRef.current, { passive: true })
-      return () => scrollElement.removeEventListener('scroll', checkScrollPositionRef.current)
+      scrollElement.addEventListener('scroll', handleScroll, { passive: true })
+      
+      // 初始加載時檢查一次滾動位置
+      setTimeout(() => {
+        debouncedCheckScrollPosition()
+      }, 100)
+        return () => scrollElement.removeEventListener('scroll', handleScroll)
     }
-  }, [])
-
+  }, [debouncedCheckScrollPosition])  // 當防抖函數改變時重新設置監聽器
+  
   // Auto-scroll to bottom when new messages arrive, but only if already at bottom
   useEffect(() => {
     if (isAtBottom) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-    } else {
-      // 如果不在底部，显示滚动到底部按钮
-      setShowScrollToBottom(messages.length > 0)
     }
-  }, [messages, isAtBottom])  // Load models on component mount
+    // 在消息變化後檢查滾動位置，確保按鈕狀態正確
+    setTimeout(() => {
+      debouncedCheckScrollPosition()
+    }, 100)
+  }, [messages, isAtBottom, debouncedCheckScrollPosition])// Load models on component mount
   useEffect(() => {
     fetchModels()
     loadChatHistory()
@@ -308,7 +387,6 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
       toast.success('对话已删除')
     }
   }
-  
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return
 
@@ -346,7 +424,9 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
         console.log('✅ New session created and added to history:', sessionId)
       } else {
         console.log('📝 Using existing session:', sessionId)
-      }const endpoint = useAgent 
+      }
+
+      const endpoint = useAgent 
         ? `${API_BASE_URL}/api/v1/agent/`
         : `${API_BASE_URL}/api/v1/chat/completions`
 
@@ -354,8 +434,26 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
       console.log('🔧 useAgent state:', useAgent)
       
       // Build request body using enhanced builder with session support
-      const body = await buildRequestBodyWithSession([...messages, userMessage], sessionId)// Make API request with retry logic
+      const body = await buildRequestBodyWithSession([...messages, userMessage], sessionId)
+
+      // 记录API调用开始时间
+      const apiStartTime = performance.now()
+      
+      // Make API request with retry logic
       const data = await makeApiRequest(endpoint, body)
+      
+      // 计算API响应时间
+      const apiEndTime = performance.now()
+      const apiResponseTime = apiEndTime - apiStartTime
+      
+      // 更新LLM统计信息
+      setLlmStats(prev => ({
+        totalCalls: prev.totalCalls + 1,
+        totalTokens: prev.totalTokens + (data.usage?.total_tokens || 0),
+        avgResponseTime: ((prev.avgResponseTime * prev.totalCalls) + apiResponseTime) / (prev.totalCalls + 1),
+        successRate: ((prev.successRate * prev.totalCalls) + 1) / (prev.totalCalls + 1),
+        failureCount: prev.failureCount
+      }))
       
       // 异步解析响应，避免阻塞UI
       const assistantMessage: Message = {
@@ -367,22 +465,67 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
 
       // 先显示临时消息，避免等待
       setMessages(prev => [...prev, assistantMessage])
-      
+
       // 异步处理响应内容
-      setTimeout(() => {        try {
+      setTimeout(() => {
+        try {
           const assistantContent = parseApiResponse(data, useAgent)
           
           // 确保 assistantContent 是字符串
           const finalContent = typeof assistantContent === 'string' 
             ? assistantContent 
             : JSON.stringify(assistantContent)
+            // 增强消息数据，添加Agent模式的详细信息
+          const enhancedMessage: Message = {
+            ...assistantMessage,
+            content: finalContent,
+            // 模式增强信息（後端優先，前端fallback）
+            mode: data.mode || (useAgent ? 'agent' : 'llm'),
+            model_used: data.model_used || selectedModel,
+            execution_time: data.execution_time,
+            steps_taken: data.steps_taken,
+            generated_image: data.generated_image || data.image_data_uri,
+            execution_trace: data.execution_trace || [],
+            reasoning_steps: data.reasoning_steps || [],
+            tools_used: data.tools_used || []
+          }
           
           // 更新消息内容
           setMessages(prev => prev.map(msg => 
             msg.id === assistantMessage.id 
-              ? { ...msg, content: finalContent }
+              ? enhancedMessage
               : msg
           ))
+          
+          // 更新增强的消息统计信息
+          setMessageStats(prev => ({
+            ...prev,
+            [assistantMessage.id]: {
+              processingTime: data.execution_time || apiResponseTime / 1000,
+              tokenCount: data.usage?.total_tokens || 0,
+              modelUsed: selectedModel,
+              toolsCount: (data.execution_trace || []).filter((trace: any) => 
+                trace.action && trace.action !== 'thinking' && trace.action !== 'responding'
+              ).length,
+              memoryUsed: useAgent ? enableMemory : false,
+              mcpToolsUsed: useAgent && enableMcp ? (data.tools_used || []).map((tool: any) => tool.name) : [],
+              responseSize: JSON.stringify(data).length
+            }
+          }))
+          
+          // Agent模式状态更新
+          if (useAgent && data.success) {
+            setAgentStatus(prev => ({
+              ...prev,
+              [assistantMessage.id]: {
+                currentStep: 'completed',
+                totalSteps: data.steps_taken || 0,
+                isReflecting: enableReflection && (data.reasoning_steps || []).some((step: any) => step.type === 'reflection'),
+                toolsInUse: (data.tools_used || []).map((tool: any) => tool.name),
+                memoryActive: enableMemory
+              }
+            }))
+          }
           
           // 保存原始响应数据用于调试 (限制数量防止内存泄漏)
           setRawResponses(prev => {
@@ -412,29 +555,91 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
               ? { ...msg, content: '响应解析失败，请查看原始JSON' }
               : msg
           ))
+          
+          // 更新失败统计
+          setLlmStats(prev => ({
+            ...prev,
+            failureCount: prev.failureCount + 1,
+            successRate: ((prev.successRate * (prev.totalCalls - 1))) / prev.totalCalls
+          }))
         }
       }, 10) // 10ms延迟，让UI先更新
         // 设置当前会话ID（如果是新会话）
       if (!currentChatId) {
         setCurrentChatId(sessionId)
-      }
-
-      console.log('✅ Message sent successfully to session:', sessionId)
-      toast.success(`${useAgent ? 'Agent' : '聊天'}響應已收到`)
+      }      console.log('✅ Message sent successfully to session:', sessionId)
       
-    } catch (error) {
+      // 如果是新會話的第一條消息，重新加載會話列表以獲取智能生成的標題
+      if (isNewSession || (!currentChatId && sessionId)) {
+        console.log('🔄 Reloading sessions to get updated title...')
+        setTimeout(async () => {
+          try {
+            await loadUserSessionsFromAPI()
+            console.log('✅ Sessions reloaded with updated titles')
+          } catch (error) {
+            console.warn('⚠️ Failed to reload sessions after title generation:', error)
+          }
+        }, 1000) // 1秒延遲，給後端時間生成標題
+      }
+      
+      toast.success(`${useAgent ? 'Agent' : '聊天'}響應已收到`)
+        } catch (error) {
       console.error('❌ Error sending message:', error)
+      
+      // 創建詳細的錯誤信息對象用於調試
+      const errorDetails = {
+        error: error instanceof Error ? error.message : '發生未知錯誤',
+        timestamp: new Date().toISOString(),
+        endpoint: useAgent ? `${API_BASE_URL}/api/v1/agent/` : `${API_BASE_URL}/api/v1/chat/completions`,
+        mode: useAgent ? 'Agent' : 'Chat',
+        model: selectedModel,
+        apiKey: API_KEY,
+        requestBody: await buildRequestBodyWithSession([...messages, userMessage], currentChatId).catch(() => 'Failed to build request body')
+      }
+      
+      // 生成友好的錯誤消息
+      let friendlyErrorMessage = ''
+      
+      if (error instanceof Error) {
+        if (error.message.includes('Agent处理超时')) {
+          friendlyErrorMessage = `🤖 Agent正在處理複雜任務，處理時間較長。\n\n${error.message}\n\n 建議：\n• 嘗試簡化您的請求\n• 分步驟提出問題\n• 檢查網絡連接是否穩定`
+        } else if (error.message.includes('请求已取消')) {
+          friendlyErrorMessage = `⏹️ 請求已取消\n\n這可能是因為：\n• 您手動取消了請求\n• ${useAgent ? 'Agent處理時間過長' : '網絡響應超時'}\n• 後端服務暫時不可用`
+        } else if (error.message.includes('API请求失败: 404')) {
+          friendlyErrorMessage = `🔍 API端點不存在\n\n請檢查：\n• 後端服務是否正確運行\n• API版本是否匹配\n• ${useAgent ? 'Agent' : 'Chat'}端點是否可用`
+        } else if (error.message.includes('API请求失败: 401')) {
+          friendlyErrorMessage = `🔐 API密鑰驗證失敗\n\n請檢查：\n• API密鑰是否正確\n• 後端服務配置\n• 權限設置`
+        } else if (error.message.includes('API请求失败: 500')) {
+          friendlyErrorMessage = `🚧 後端服務內部錯誤\n\n這通常是暫時性問題：\n• 請稍後重試\n• 檢查後端服務日志\n• 確認模型是否可用`
+        } else {
+          friendlyErrorMessage = `❌ ${useAgent ? 'Agent' : '聊天'}請求失敗\n\n錯誤詳情：${error.message}`
+        }
+      } else {
+        friendlyErrorMessage = '❌ 發生未知錯誤，請重試'
+      }
+      
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: `❌ 錯誤: ${error instanceof Error ? error.message : '發生未知錯誤'}\n\n🔧 診斷信息：\n• 後端服務: ${API_BASE_URL}\n• API 模式: ${useAgent ? 'Agent' : 'Chat'}\n• 所選模型: ${selectedModel}\n• API 密鑰: ${API_KEY}\n\n📋 請檢查：\n1. 後端服務是否在 ${API_BASE_URL} 運行\n2. API 端點是否正確配置\n3. 模型是否可用\n4. 網絡連接是否正常\n\n💡 提示: 您可以點擊側邊欄的"測試"按鈕檢查連接狀態`,
-        timestamp: new Date().toISOString()
+        content: friendlyErrorMessage,
+        timestamp: new Date().toISOString(),        // 添加錯誤相關的元數據
+        mode: useAgent ? 'agent' : 'llm',
+        model_used: selectedModel,
+        error_details: errorDetails // 用於JSON按鈕顯示
       }
+      
       setMessages(prev => [...prev, errorMessage])
-      toast.error(`發送${useAgent ? 'Agent' : '聊天'}請求失敗`)
+      
+      // 將錯誤詳情存儲到rawResponses中，這樣用戶可以通過JSON按鈕查看
+      setRawResponses(prev => ({
+        ...prev,
+        [errorMessage.id]: errorDetails
+      }))
+      
+      toast.error(`${useAgent ? 'Agent' : '聊天'}請求失敗`)
     } finally {
       setIsLoading(false)
-      abortControllerRef.current = null
+      requestManager.finishRequest()
     }
   }
   
@@ -578,10 +783,41 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
     toast.success('所有對話歷史已清除')
   }  // API configuration
   const API_KEY = 'test_api_key'
-  const REQUEST_TIMEOUT = 30000 // 30 seconds
-
-  // Create abort controller for request cancellation
+  const REQUEST_TIMEOUT = 30000 // 30 seconds for chat mode
+  const AGENT_REQUEST_TIMEOUT = 120000 // 120 seconds (2 minutes) for agent mode
+  // Create abort controller for request cancellation with better state management
   const abortControllerRef = useRef<AbortController | null>(null)
+  const isRequestActiveRef = useRef(false)
+  
+  // 請求管理器 - 提供更精確的請求控制
+  const requestManager = {
+    startRequest: () => {
+      console.log('🚀 Starting new request...')
+      isRequestActiveRef.current = true
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort('New request started')
+      }
+      abortControllerRef.current = new AbortController()
+      return abortControllerRef.current
+    },
+    
+    cancelRequest: () => {
+      console.log('🛑 Manually cancelling request...')
+      if (abortControllerRef.current && isRequestActiveRef.current) {
+        abortControllerRef.current.abort('User cancelled')
+        isRequestActiveRef.current = false
+        setIsLoading(false)
+        toast.info('請求已取消')
+      }
+    },
+      finishRequest: () => {
+      console.log('✅ Request finished')
+      isRequestActiveRef.current = false
+      // 不立即清除controller，讓它自然過期，這樣可以避免在請求完成期間的競態條件
+    },
+    
+    isActive: () => isRequestActiveRef.current
+  }
 
   // 会话图片恢复函数
   const restoreSessionImages = async (sessionId: string, messages: Message[]): Promise<Message[]> => {
@@ -746,16 +982,40 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
           }
         } catch (error) {
           console.warn('⚠️ Failed to fetch session images for attachment matching:', error)
-        }
-
-        // 重建 rawResponses 数据
+        }        // 重建 rawResponses 数据
         const restoredRawResponses: {[messageId: string]: any} = {}
         let imageIndex = 0 // 用于跟踪图片索引，按顺序分配给有图片的助手消息
         
         sessionMessages.forEach((message: Message) => {
           if (message.role === 'assistant' && message.content) {
-            // 检查消息内容是否包含图片引用
-            if (message.content.includes('/api/v1/images/')) {
+            // 首先檢查是否有存儲的 raw_response 數據（新版本）
+            if ((message as any).raw_response) {
+              restoredRawResponses[message.id] = (message as any).raw_response
+              console.log('🔄 Restored stored raw_response for message:', message.id)
+            }
+            // 或者檢查是否有其他增強數據字段
+            else if ((message as any).tool_calls || (message as any).image_data_uri || (message as any).execution_trace) {
+              // 構建 raw_response 結構
+              restoredRawResponses[message.id] = {
+                success: true,
+                interaction_id: message.id,
+                response: {},
+                tool_calls: (message as any).tool_calls || null,
+                image_data_uri: (message as any).image_data_uri || null,
+                execution_trace: (message as any).execution_trace || [],
+                reasoning_steps: (message as any).reasoning_steps || [],
+                tools_used: (message as any).tools_used || [],
+                execution_time: (message as any).execution_time || 0,
+                steps_taken: (message as any).steps_taken || 1,
+                meta: {
+                  model: (message as any).model_used || 'unknown',
+                  timestamp: message.timestamp || new Date().toISOString()
+                }
+              }
+              console.log('🔄 Built raw_response from enhanced fields for message:', message.id)
+            }
+            // 兼容舊版本：检查消息内容是否包含图片引用
+            else if (message.content.includes('/api/v1/images/')) {
               // 从消息内容中提取图片URL
               const imageUrlMatch = message.content.match(/!\[.*?\]\((\/api\/v1\/images\/[^)]+)\)/)
               if (imageUrlMatch) {
@@ -917,38 +1177,122 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
         user_id: "test",
         model_name: selectedModel,
         session_id: finalSessionId,
-        enable_memory: true,
-        enable_reflection: true,
-        enable_react_mode: true,
+        
+        // Agent基础功能配置
+        enable_memory: enableMemory,
+        enable_reflection: enableReflection,
+        enable_react_mode: enableReactMode,
         enable_mcp: enableMcp,
-        language: 'zh-CN'
+        
+        // 工具配置
+        tools_config: {
+          enable_search: enableSearch,
+          include_advanced_tools: true
+        },
+        
+        // 高级Agent配置
+        max_steps: useAgent ? 10 : undefined, // 可配置的最大步骤数
+        system_prompt_override: undefined, // 可选的系统提示覆盖
+        
+        // 上下文增强
+        additional_context: [],
+        context: {
+          ui_mode: compactMode ? 'compact' : 'standard',
+          display_preferences: {
+            show_timestamps: showTimestamps,
+            show_model_info: showModelInfo,
+            show_performance_metrics: showPerformanceMetrics
+          },
+          session_info: {
+            message_count: messages.length,
+            current_session_id: finalSessionId
+          }
+        },
+          // 环境信息（用于增强上下文）
+        environment_info: {
+          timestamp: new Date().toISOString(),
+          user_agent: navigator.userAgent,
+          language: navigator.language || 'en-US', // 自動檢測用戶語言
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          user_preferences: {
+            compact_mode: compactMode,
+            show_timestamps: showTimestamps,
+            show_model_info: showModelInfo,
+            show_performance_metrics: showPerformanceMetrics
+          },
+          session_context: {
+            total_messages: messages.length,
+            agent_messages: messages.filter(m => m.mode === 'agent').length,
+            has_images: messages.some(m => m.generated_image || m.content.includes('![') || m.content.includes('/api/v1/images/')),
+            tools_previously_used: Array.from(new Set(
+              messages.flatMap(m => m.tools_used?.map(tool => tool.name) || [])
+            ))
+          }
+        },
+        
+        // 可能的多模态输入
+        image: undefined, // 可以在需要时添加
+        audio: undefined, // 可以在需要时添加
+        
+        // MCP特定配置
+        document_chunks: enableMcp ? [] : undefined
       }
+      
       console.log('🤖 Agent API request body:', agentBody)
       return agentBody
     } else {
       // Chat API 格式 - 需要 messages 字段
       const chatBody = {
-        messages: messages,
+        messages: messages.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp
+        })),
         model: selectedModel,
         user_id: "test",
         session_id: finalSessionId,
+        
+        // Chat模式工具配置
         tools: enableMcp ? undefined : [],
         enable_search: enableSearch,
-        language: 'zh-CN',
-        disable_history: disableHistory
+          // 语言和历史设置
+        language: navigator.language || 'en-US', // 自動檢測用戶語言
+        disable_history: disableHistory,
+        
+        // 温度和其他生成参数
+        temperature: 0.7,
+        max_tokens: 4000,
+        
+        // 增强的上下文信息
+        context: {
+          ui_preferences: {
+            compact_mode: compactMode,
+            show_model_info: showModelInfo,
+            show_timestamps: showTimestamps
+          },
+          session_metadata: {
+            message_count: messages.length,
+            session_id: finalSessionId,
+            has_previous_context: !disableHistory
+          }
+        },
+        
+        // 用户偏好和环境
+        user_preferences: {
+          response_format: 'markdown',
+          include_reasoning: false, // Chat模式通常不需要推理步骤
+          max_response_length: 4000
+        }
       }
+      
       console.log('💬 Chat API request body:', chatBody)
       return chatBody
     }
   }
 
-  // Cancel ongoing request
+  // Cancel ongoing request  
   const cancelRequest = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-      setIsLoading(false)
-      toast.info('請求已取消')
-    }
+    requestManager.cancelRequest()
   }
 
   // 会话管理API调用函数
@@ -1022,26 +1366,28 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
     } catch (error) {
       console.error('❌ Error loading session:', error)
       return false
-    }  }
-
-  // Enhanced API request function with retry logic
-  const makeApiRequest = async (endpoint: string, body: any, retries = 2): Promise<any> => {
-    // Cancel previous request if still pending
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-    }
-
-    // Create new abort controller
-    abortControllerRef.current = new AbortController()
+    }  }  // Enhanced API request function with retry logic and adaptive timeout
+  const makeApiRequest = async (endpoint: string, body: any, retries = 2): Promise<any> => {    // 使用請求管理器來處理請求生命週期
+    const controller = requestManager.startRequest()
+    if (abortControllerRef.current && abortControllerRef.current.signal.aborted) {
+      console.log('Previous request was already aborted, creating new controller')
+    } else if (abortControllerRef.current) {
+      console.log('⚠️ Previous request still active, but proceeding with new request (concurrent)')
+    }    // Use different timeout based on request type
+    const isAgentRequest = endpoint.includes('/agent')
+    const timeout = isAgentRequest ? AGENT_REQUEST_TIMEOUT : REQUEST_TIMEOUT
+    
     const timeoutId = setTimeout(() => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort()
+      if (controller && !controller.signal.aborted) {
+        console.log(`⏰ Request timeout after ${timeout}ms (${isAgentRequest ? 'Agent' : 'Chat'} mode)`)
+        controller.abort(`Request timeout after ${timeout}ms`)
       }
-    }, REQUEST_TIMEOUT)
+    }, timeout)
 
     try {
       console.log(`🚀 Making API request to: ${endpoint}`)
       console.log(`🔄 Attempt: ${3 - retries}/3`)
+      console.log(`⏰ Timeout: ${timeout}ms (${isAgentRequest ? 'Agent' : 'Chat'} mode)`)
       console.log('📦 Request body:', JSON.stringify(body, null, 2))
 
       // Validate request body to prevent invalid HTTP requests
@@ -1057,7 +1403,7 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
           'accept': 'application/json'
         },
         body: JSON.stringify(body),
-        signal: abortControllerRef.current.signal
+        signal: controller.signal
       })
 
       clearTimeout(timeoutId)
@@ -1065,11 +1411,21 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
       if (!response.ok) {
         const errorText = await response.text()
         console.error(`❌ API Error Response (${response.status}):`, errorText)
+        
+        // Try to parse error as JSON for better error handling
+        let errorData = null
+        try {
+          errorData = JSON.parse(errorText)
+        } catch (e) {
+          // Not JSON, use raw text
+        }
+        
         throw new Error(`API请求失败: ${response.status} - ${errorText}`)
-      }
-
-      const data = await response.json()
+      }      const data = await response.json()
       console.log('✅ API Response received:', data)
+      
+      // 成功完成請求，通知請求管理器
+      requestManager.finishRequest()
       return data
 
     } catch (error: any) {
@@ -1077,7 +1433,15 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
       
       if (error.name === 'AbortError') {
         console.log('🛑 Request was cancelled')
-        throw new Error('请求已取消')
+        // 只有在非重試情況下才完成請求
+        if (retries <= 0) {
+          requestManager.finishRequest()
+        }
+        if (isAgentRequest) {
+          throw new Error(`Agent处理超时 (${timeout/1000}秒)，可能是因为任务复杂度较高。请稍后重试或简化请求。`)
+        } else {
+          throw new Error('请求已取消')
+        }
       }
 
       console.error(`❌ API request failed (attempt ${3 - retries}/3):`, error)
@@ -1085,8 +1449,13 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
       if (retries > 0 && !error.message.includes('please try again later')) {
         console.log(`🔄 Retrying in ${(3 - retries) * 1000}ms...`)
         await new Promise(resolve => setTimeout(resolve, (3 - retries) * 1000))
+        // 重試時不完成請求，讓新的請求繼續使用同一個管理器
         return makeApiRequest(endpoint, body, retries - 1)
-      }      throw error
+      }
+
+      // 請求失敗且不重試，完成請求
+      requestManager.finishRequest()
+      throw error
     }
   }
 
@@ -1398,21 +1767,37 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
   useEffect(() => {
     if (currentChatId && messages.length > 0) {
       initializeSessionImages()
-    }
-  }, [currentChatId]) // 只在会话ID变化时触发
+    }  }, [currentChatId]) // 只在会话ID变化时触发
 
-  // Update chat history when messages change
+  // Update chat history when messages change - 使用防抖優化
+  const updateChatHistoryRef = useRef<NodeJS.Timeout | null>(null)
+  
   useEffect(() => {
     if (currentChatId && messages.length > 0) {
-      setChatHistory(prev => 
-        prev.map(chat => 
-          chat.id === currentChatId 
-            ? { ...chat, messages: messages, timestamp: new Date().toISOString() }
-            : chat
+      // 清除之前的定時器
+      if (updateChatHistoryRef.current) {
+        clearTimeout(updateChatHistoryRef.current)
+      }
+      
+      // 使用防抖，避免頻繁更新聊天歷史
+      updateChatHistoryRef.current = setTimeout(() => {
+        setChatHistory(prev => 
+          prev.map(chat => 
+            chat.id === currentChatId 
+              ? { ...chat, messages: messages, timestamp: new Date().toISOString() }
+              : chat
+          )
         )
-      )
+      }, 500) // 500ms 防抖延遲
     }
-  }, [messages, currentChatId])
+    
+    // 清理函數
+    return () => {
+      if (updateChatHistoryRef.current) {
+        clearTimeout(updateChatHistoryRef.current)
+      }
+    }
+  }, [messages.length, currentChatId]) // 只依賴於消息數量而不是整個消息數組
 
   return (
     <div className="flex h-screen bg-background">
@@ -1565,6 +1950,40 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
                   onCheckedChange={setEnableMcp}
                   className="scale-75"
                 />
+              </div>              {/* 显示增强模式切换 */}
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-muted-foreground">紧凑模式</Label>
+                <Switch
+                  checked={compactMode}
+                  onCheckedChange={setCompactMode}
+                  className="scale-75"
+                />
+              </div>
+              
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-muted-foreground">显示时间</Label>
+                <Switch
+                  checked={showTimestamps}
+                  onCheckedChange={setShowTimestamps}
+                  className="scale-75"
+                />
+              </div>
+                <div className="flex items-center justify-between">
+                <Label className="text-xs text-muted-foreground">模型信息</Label>
+                <Switch
+                  checked={showModelInfo}
+                  onCheckedChange={setShowModelInfo}
+                  className="scale-75"
+                />
+              </div>
+              
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-muted-foreground">性能指标</Label>
+                <Switch
+                  checked={showPerformanceMetrics}
+                  onCheckedChange={setShowPerformanceMetrics}
+                  className="scale-75"
+                />
               </div>
 
               {useAgent && (
@@ -1632,8 +2051,7 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
                 <Code className="w-3 h-3" />
                 清理JSON缓存 ({Object.keys(rawResponses).length})
               </Button>
-              
-              {/* Debug Info */}
+                {/* Debug Info with Agent Statistics */}
               <details className="text-xs">
                 <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
                   調試信息
@@ -1646,6 +2064,45 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
                   <div><strong>連接狀態:</strong> {apiStatus}</div>
                   <div><strong>模式:</strong> {useAgent ? 'Agent' : 'Chat'}</div>
                   <div><strong>JSON缓存:</strong> {Object.keys(rawResponses).length}条</div>
+                    <div><strong>LLM服务统计:</strong></div>
+                  <div className="ml-2 space-y-1">
+                    <div>• 总调用次数: {llmStats.totalCalls}</div>
+                    <div>• 总Token数: {llmStats.totalTokens.toLocaleString()}</div>
+                    <div>• 平均响应时间: {llmStats.avgResponseTime.toFixed(0)}ms</div>
+                    <div>• 成功率: {(llmStats.successRate * 100).toFixed(1)}%</div>
+                    <div>• 失败次数: {llmStats.failureCount}</div>
+                  </div>
+                  
+                  <div><strong>Agent统计:</strong></div>
+                  <div className="ml-2 space-y-1">
+                    {(() => {
+                      const agentMessages = messages.filter(m => m.mode === 'agent' && m.role === 'assistant')
+                      const totalExecutionTime = agentMessages.reduce((sum, m) => sum + (m.execution_time || 0), 0)
+                      const totalSteps = agentMessages.reduce((sum, m) => sum + (m.steps_taken || 0), 0)
+                      const totalToolUsage = agentMessages.reduce((sum, m) => sum + (m.tools_used?.length || 0), 0)
+                      const avgExecutionTime = agentMessages.length > 0 ? totalExecutionTime / agentMessages.length : 0
+                      const avgStepsPerMessage = agentMessages.length > 0 ? totalSteps / agentMessages.length : 0
+                      const uniqueToolsUsed = Array.from(new Set(
+                        agentMessages.flatMap(m => m.tools_used?.map(tool => tool.name) || [])
+                      ))
+                      
+                      return (
+                        <>
+                          <div>• Agent消息: {agentMessages.length}</div>
+                          <div>• 总执行时间: {totalExecutionTime.toFixed(2)}s</div>
+                          <div>• 平均执行时间: {avgExecutionTime.toFixed(2)}s</div>
+                          <div>• 总执行步骤: {totalSteps}</div>
+                          <div>• 平均步骤数: {avgStepsPerMessage.toFixed(1)}</div>
+                          <div>• 工具调用次数: {totalToolUsage}</div>
+                          <div>• 使用的工具: {uniqueToolsUsed.join(', ') || '无'}</div>
+                          <div>• 记忆模式: {enableMemory ? '✓' : '✗'}</div>
+                          <div>• 反思模式: {enableReflection ? '✓' : '✗'}</div>
+                          <div>• React模式: {enableReactMode ? '✓' : '✗'}</div>
+                        </>
+                      )
+                    })()}
+                  </div>
+                  
                   <div><strong>功能狀態:</strong></div>
                   <div className="ml-2">
                     • 搜索: {enableSearch ? '✓' : '✗'}<br/>
@@ -1654,12 +2111,16 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
                       <>
                         • 記憶: {enableMemory ? '✓' : '✗'}<br/>
                         • 反思: {enableReflection ? '✓' : '✗'}<br/>
-                        • React: {enableReactMode ? '✓' : '✗'}
+                        • React: {enableReactMode ? '✓' : '✗'}<br/>
                       </>
                     )}
                     {!useAgent && (
                       <>• 禁用歷史: {disableHistory ? '✓' : '✗'}</>
                     )}
+                    <br/>
+                    • 紧凑模式: {compactMode ? '✓' : '✗'}<br/>
+                    • 显示时间: {showTimestamps ? '✓' : '✗'}<br/>
+                    • 模型信息: {showModelInfo ? '✓' : '✗'}
                   </div>
                 </div>
               </details>
@@ -1739,13 +2200,82 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
                         </div>
                       )}
                     </div>
-                    
-                    {/* Message Content */}
+                      {/* Message Content */}
                     <div className="flex-1 min-w-0 space-y-2">
-                      <div className="text-sm font-medium text-foreground">
-                        {message.role === 'user' ? '你' : 'AI助手'}                      </div>                      <div className="prose prose-sm max-w-none dark:prose-invert">                        <ReactMarkdown 
+                      {/* Message Header with enhanced info */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm font-medium text-foreground">
+                            {message.role === 'user' ? '你' : 'AI助手'}
+                          </div>
+                          
+                          {/* 显示模式和模型信息 */}
+                          {showModelInfo && message.role === 'assistant' && (
+                            <div className="flex items-center gap-1 text-xs">
+                              {message.mode === 'agent' && (
+                                <div className="flex items-center gap-1 px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full">
+                                  <Brain className="w-3 h-3" />
+                                  <span>Agent</span>
+                                </div>
+                              )}
+                              {message.model_used && (
+                                <div className="px-2 py-0.5 bg-muted/70 text-muted-foreground rounded-full">
+                                  {message.model_used}
+                                </div>
+                              )}
+                              {message.execution_time && (
+                                <div className="flex items-center gap-1 px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full">
+                                  <Clock className="w-3 h-3" />
+                                  <span>{message.execution_time.toFixed(2)}s</span>
+                                </div>
+                              )}
+                              {message.steps_taken && message.steps_taken > 0 && (
+                                <div className="flex items-center gap-1 px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full">
+                                  <Zap className="w-3 h-3" />
+                                  <span>{message.steps_taken}步</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        
+                        {/* Timestamp */}
+                        {showTimestamps && (
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(message.timestamp).toLocaleTimeString('zh-CN', {
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                        )}
+                      </div>
+                      
+                      {/* Agent模式执行追踪摘要 */}
+                      {message.mode === 'agent' && !compactMode && (message.tools_used?.length || 0) > 0 && (
+                        <div className="mb-3 p-2 bg-muted/30 rounded-lg border border-muted">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Wrench className="w-4 h-4 text-muted-foreground" />
+                            <span className="text-sm font-medium text-muted-foreground">工具使用情况</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {message.tools_used?.map((tool, index) => (
+                              <div key={index} className="flex items-center gap-1 px-2 py-1 bg-background rounded text-xs">
+                                {tool.name === 'generateImage' && <Image className="w-3 h-3" />}
+                                {tool.name === 'search' && <Search className="w-3 h-3" />}
+                                {tool.name !== 'generateImage' && tool.name !== 'search' && <FileText className="w-3 h-3" />}
+                                <span>{tool.name}</span>
+                                {tool.duration && (
+                                  <span className="text-muted-foreground">({tool.duration}ms)</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                        {/* Message Content */}
+                      <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-p:leading-relaxed prose-li:my-1"><ReactMarkdown 
                           remarkPlugins={[remarkGfm]}
-                          rehypePlugins={[rehypeRaw]}                          urlTransform={(url) => {
+                          rehypePlugins={[rehypeRaw]}urlTransform={(url) => {
                             // 处理不同类型的URL
                             console.log('🔄 Processing URL in ReactMarkdown:', url.substring(0, 50))
                             
@@ -1806,38 +2336,80 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
                               const hasImage = React.Children.toArray(children).some(child => 
                                 React.isValidElement(child) && child.type === 'img'
                               )
-                              
-                              if (hasImage) {
+                                if (hasImage) {
                                 return (
-                                  <div className="text-foreground leading-relaxed whitespace-pre-wrap mb-2">
+                                  <div className="text-foreground leading-relaxed mb-3">
                                     {children}
                                   </div>
                                 )
                               }
                               
                               return (
-                                <p className="text-foreground leading-relaxed whitespace-pre-wrap mb-2">
+                                <p className="text-foreground leading-relaxed mb-3">
                                   {children}
                                 </p>
                               )
-                            },
-                            code: ({ children, className, ...props }) => {
+                            },                            code: ({ children, className, ...props }) => {
                               const isInline = !className
                               return isInline ? (
-                                <code className="bg-muted px-1 py-0.5 rounded text-sm font-mono" {...props}>
+                                <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono text-foreground border" {...props}>
                                   {children}
                                 </code>
                               ) : (
-                                <code className="block bg-muted p-3 rounded-lg text-sm font-mono overflow-x-auto" {...props}>
+                                <code className="block bg-muted p-4 rounded-lg text-sm font-mono overflow-x-auto text-foreground border mb-4" {...props}>
                                   {children}
                                 </code>
                               )
-                            }
+                            },
+                            h1: ({ children }) => (
+                              <h1 className="text-2xl font-bold mb-4 mt-6 text-foreground border-b border-border pb-2">
+                                {children}
+                              </h1>
+                            ),
+                            h2: ({ children }) => (
+                              <h2 className="text-xl font-semibold mb-3 mt-5 text-foreground">
+                                {children}
+                              </h2>
+                            ),
+                            h3: ({ children }) => (
+                              <h3 className="text-lg font-medium mb-2 mt-4 text-foreground">
+                                {children}
+                              </h3>
+                            ),
+                            ul: ({ children }) => (
+                              <ul className="list-disc list-inside mb-4 ml-4 space-y-1 text-foreground">
+                                {children}
+                              </ul>
+                            ),
+                            ol: ({ children }) => (
+                              <ol className="list-decimal list-inside mb-4 ml-4 space-y-1 text-foreground">
+                                {children}
+                              </ol>
+                            ),
+                            li: ({ children }) => (
+                              <li className="leading-relaxed text-foreground pl-2">
+                                {children}
+                              </li>
+                            ),
+                            blockquote: ({ children }) => (
+                              <blockquote className="border-l-4 border-primary pl-4 my-4 italic text-muted-foreground bg-muted/30 py-2">
+                                {children}
+                              </blockquote>
+                            ),
+                            strong: ({ children }) => (
+                              <strong className="font-semibold text-foreground">
+                                {children}
+                              </strong>
+                            ),
+                            em: ({ children }) => (
+                              <em className="italic text-foreground">
+                                {children}
+                              </em>
+                            )
                           }}                        >
                           {typeof message.content === 'string' ? message.content : JSON.stringify(message.content)}
                         </ReactMarkdown>
-                      </div>
-                        {/* Message Actions */}
+                      </div>                        {/* Message Actions */}
                       <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <Button
                           variant="ghost"
@@ -1848,6 +2420,72 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
                           <Copy className="w-3 h-3 mr-1" />
                           复制
                         </Button>
+                          {/* Agent模式专用按钮 */}
+                        {message.role === 'assistant' && message.mode === 'agent' && (
+                          <>
+                            {/* 推理步骤按钮 */}
+                            {message.reasoning_steps && message.reasoning_steps.length > 0 && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setShowReasoningSteps(prev => ({
+                                  ...prev,
+                                  [message.id]: !prev[message.id]
+                                }))}
+                                className="h-7 px-2 text-xs"
+                              >
+                                <Brain className="w-3 h-3 mr-1" />
+                                {showReasoningSteps[message.id] ? '隐藏推理' : `推理过程 (${message.reasoning_steps.length})`}
+                              </Button>
+                            )}
+                            
+                            {/* 执行轨迹按钮 */}
+                            {message.execution_trace && message.execution_trace.length > 0 && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setShowExecutionTrace(prev => ({
+                                  ...prev,
+                                  [message.id]: !prev[message.id]
+                                }))}
+                                className="h-7 px-2 text-xs"
+                              >
+                                <Eye className="w-3 h-3 mr-1" />
+                                {showExecutionTrace[message.id] ? '隐藏轨迹' : `执行轨迹 (${message.execution_trace.length})`}
+                              </Button>
+                            )}
+                            
+                            {/* 工具详情按钮 */}
+                            {message.tools_used && message.tools_used.length > 0 && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setShowToolDetails(prev => ({
+                                  ...prev,
+                                  [message.id]: !prev[message.id]
+                                }))}
+                                className="h-7 px-2 text-xs"
+                              >
+                                <Wrench className="w-3 h-3 mr-1" />
+                                {showToolDetails[message.id] ? '隐藏工具' : `工具详情 (${message.tools_used.length})`}
+                              </Button>
+                            )}
+                              {/* Agent详情按钮 */}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setShowAgentDetails(prev => ({
+                                ...prev,
+                                [message.id]: !prev[message.id]
+                              }))}
+                              className="h-7 px-2 text-xs"
+                            >
+                              <Settings className="w-3 h-3 mr-1" />
+                              {showAgentDetails[message.id] ? '隐藏详情' : 'Agent详情'}
+                            </Button>
+                          </>
+                        )}
+                        
                         {/* JSON展开按钮 - 只对AI助手消息显示 */}
                         {message.role === 'assistant' && rawResponses[message.id] && (
                           <Button
@@ -1863,16 +2501,173 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
                             {expandedJson[message.id] ? '隐藏JSON' : '显示JSON'}
                           </Button>
                         )}
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(message.timestamp).toLocaleTimeString('zh-CN', {
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}
-                        </span>
-                      </div>
+                        
+                        {/* 时间戳（当启用时显示在操作栏） */}
+                        {!showTimestamps && (
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(message.timestamp).toLocaleTimeString('zh-CN', {
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                        )}
+                      </div>                        {/* Agent推理步骤展示 */}
+                      {message.role === 'assistant' && message.mode === 'agent' && showReasoningSteps[message.id] && message.reasoning_steps && (
+                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Brain className="w-4 h-4 text-muted-foreground" />
+                            <span className="text-sm font-medium text-muted-foreground">推理过程</span>
+                          </div>
+                          <div className="space-y-2">
+                            {message.reasoning_steps.map((step, index) => (
+                              <div key={index} className="flex gap-3 p-2 bg-background rounded border-l-2 border-muted">
+                                <div className="flex-shrink-0 mt-1">
+                                  {step.type === 'thought' && <Brain className="w-4 h-4 text-blue-500" />}
+                                  {step.type === 'action' && <Zap className="w-4 h-4 text-green-500" />}
+                                  {step.type === 'observation' && <Eye className="w-4 h-4 text-purple-500" />}
+                                  {step.type === 'reflection' && <AlertCircle className="w-4 h-4 text-orange-500" />}
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-xs font-medium capitalize text-muted-foreground">
+                                      {step.type === 'thought' && '思考'}
+                                      {step.type === 'action' && '行动'}
+                                      {step.type === 'observation' && '观察'}
+                                      {step.type === 'reflection' && '反思'}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {new Date(step.timestamp).toLocaleTimeString()}
+                                    </span>
+                                  </div>
+                                  <div className="text-sm text-foreground whitespace-pre-wrap">
+                                    {step.content}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Agent执行轨迹展示 */}
+                      {message.role === 'assistant' && message.mode === 'agent' && showExecutionTrace[message.id] && message.execution_trace && (
+                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Eye className="w-4 h-4 text-muted-foreground" />
+                            <span className="text-sm font-medium text-muted-foreground">执行轨迹</span>
+                          </div>
+                          <div className="space-y-2">
+                            {message.execution_trace.map((trace, index) => (
+                              <div key={index} className="flex gap-3 p-2 bg-background rounded border-l-2 border-muted">
+                                <div className="flex-shrink-0 mt-1">
+                                  {trace.status === 'planning' && <Loader className="w-4 h-4 text-yellow-500 animate-spin" />}
+                                  {trace.status === 'executing' && <Zap className="w-4 h-4 text-blue-500" />}
+                                  {trace.status === 'completed' && <CheckCircle className="w-4 h-4 text-green-500" />}
+                                  {trace.status === 'failed' && <XCircle className="w-4 h-4 text-red-500" />}
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-xs font-medium text-muted-foreground">
+                                      步骤 {trace.step}
+                                    </span>
+                                    <span className="text-xs capitalize px-2 py-0.5 rounded-full">
+                                      {trace.status === 'planning' && (
+                                        <span className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300">规划中</span>
+                                      )}
+                                      {trace.status === 'executing' && (
+                                        <span className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">执行中</span>
+                                      )}
+                                      {trace.status === 'completed' && (
+                                        <span className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">已完成</span>
+                                      )}
+                                      {trace.status === 'failed' && (
+                                        <span className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">失败</span>
+                                      )}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {new Date(trace.timestamp).toLocaleTimeString()}
+                                    </span>
+                                  </div>                                  
+                                  <div className="text-sm text-foreground">
+                                    {trace.action}
+                                  </div>
+                                  {trace.details && Object.keys(trace.details).length > 0 && (
+                                    <div className="text-xs text-muted-foreground mt-1 p-2 bg-muted/30 rounded">
+                                      <pre className="whitespace-pre-wrap">{JSON.stringify(trace.details, null, 2)}</pre>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Agent详细信息展示 */}
+                      {message.role === 'assistant' && message.mode === 'agent' && showAgentDetails[message.id] && (
+                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Settings className="w-4 h-4 text-muted-foreground" />
+                            <span className="text-sm font-medium text-muted-foreground">Agent详细信息</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <span className="text-muted-foreground">执行时间:</span>
+                              <span className="ml-2 font-mono">{message.execution_time?.toFixed(3)}s</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">执行步骤:</span>
+                              <span className="ml-2 font-mono">{message.steps_taken || 0}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">使用模型:</span>
+                              <span className="ml-2 font-mono">{message.model_used}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">工具调用:</span>
+                              <span className="ml-2 font-mono">{message.tools_used?.length || 0}</span>
+                            </div>
+                            {message.reasoning_steps && (
+                              <div>
+                                <span className="text-muted-foreground">推理步骤:</span>
+                                <span className="ml-2 font-mono">{message.reasoning_steps.length}</span>
+                              </div>
+                            )}
+                            {message.execution_trace && (
+                              <div>
+                                <span className="text-muted-foreground">执行轨迹:</span>
+                                <span className="ml-2 font-mono">{message.execution_trace.length}</span>
+                              </div>
+                            )}
+                          </div>
+                          
+                          {/* 工具使用详情 */}
+                          {message.tools_used && message.tools_used.length > 0 && (
+                            <div className="mt-3 pt-3 border-t border-muted">
+                              <div className="text-sm font-medium text-muted-foreground mb-2">工具使用详情</div>
+                              <div className="space-y-2">
+                                {message.tools_used.map((tool, index) => (
+                                  <div key={index} className="flex justify-between items-center p-2 bg-background rounded">
+                                    <div className="flex items-center gap-2">
+                                      {tool.name === 'generateImage' && <Image className="w-4 h-4" />}
+                                      {tool.name === 'search' && <Search className="w-4 h-4" />}
+                                      {tool.name !== 'generateImage' && tool.name !== 'search' && <FileText className="w-4 h-4" />}
+                                      <span className="font-mono text-sm">{tool.name}</span>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {tool.duration && `${tool.duration}ms`}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                         {/* 原始JSON响应显示 */}
                       {message.role === 'assistant' && rawResponses[message.id] && expandedJson[message.id] && (
-                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border">                          <div className="flex items-center gap-2 mb-2">
+                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border"><div className="flex items-center gap-2 mb-2">
                             <Code className="w-4 h-4 text-muted-foreground" />
                             <span className="text-sm font-medium text-muted-foreground">原始API响应</span>                            <div className="ml-auto flex gap-1">
                               <Button
@@ -1945,23 +2740,88 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
                 </div>
                 </MessageErrorBoundary>
               ))}
-              
-              {/* Loading State */}
+                {/* Enhanced Loading State for Agent Mode */}
               {isLoading && (
                 <div className="py-6">
                   <div className="flex gap-4">
                     <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center border">
                       <Bot className="w-4 h-4 text-muted-foreground" />
                     </div>
-                    <div className="flex-1 space-y-2">
-                      <div className="text-sm font-medium text-foreground">AI助手</div>
+                    <div className="flex-1 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm font-medium text-foreground">AI助手</div>
+                        {useAgent && (
+                          <div className="flex items-center gap-1 px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-xs">
+                            <Brain className="w-3 h-3 animate-pulse" />
+                            <span>Agent模式</span>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* 基础加载指示 */}
                       <div className="flex items-center gap-2">
                         <div className="flex items-center gap-1">
                           <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"></div>
                           <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce [animation-delay:0.1s]"></div>
                           <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce [animation-delay:0.2s]"></div>
                         </div>
-                        <span className="text-sm text-muted-foreground">正在思考...</span>
+                        <span className="text-sm text-muted-foreground">
+                          {useAgent ? '正在分析和规划...' : '正在思考...'}
+                        </span>
+                      </div>
+                      
+                      {/* Agent模式增强加载指示 */}
+                      {useAgent && (
+                        <div className="space-y-2 p-3 bg-muted/30 rounded-lg">
+                          <div className="text-xs font-medium text-muted-foreground mb-2">Agent处理状态</div>
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2 text-xs">
+                              <Loader className="w-3 h-3 animate-spin text-blue-500" />
+                              <span>分析用户请求...</span>
+                            </div>
+                            {enableMemory && (
+                              <div className="flex items-center gap-2 text-xs opacity-60">
+                                <Brain className="w-3 h-3" />
+                                <span>检索相关记忆...</span>
+                              </div>
+                            )}
+                            {enableMcp && (
+                              <div className="flex items-center gap-2 text-xs opacity-60">
+                                <Wrench className="w-3 h-3" />
+                                <span>准备工具...</span>
+                              </div>
+                            )}
+                            {enableReactMode && (
+                              <div className="flex items-center gap-2 text-xs opacity-60">
+                                <Zap className="w-3 h-3" />
+                                <span>React推理循环...</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* 模型和设置信息 */}
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span>使用模型: {selectedModel}</span>
+                        {enableSearch && (
+                          <>
+                            <span>•</span>
+                            <span className="flex items-center gap-1">
+                              <Search className="w-3 h-3" />
+                              搜索已启用
+                            </span>
+                          </>
+                        )}
+                        {useAgent && enableReflection && (
+                          <>
+                            <span>•</span>
+                            <span className="flex items-center gap-1">
+                              <AlertCircle className="w-3 h-3" />
+                              反思模式
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -2043,14 +2903,32 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
                   </Button>
                 </div>
               </div>
-            </div>
-              {/* Status Bar */}
+            </div>              {/* Enhanced Status Bar */}
             <div className="flex items-center justify-center mt-3 text-xs text-muted-foreground">
-              <div className="flex items-center gap-2">
-                <span>{useAgent ? 'Agent模式' : 'Chat模式'}</span>
+              <div className="flex items-center gap-2 flex-wrap justify-center">
+                {/* 模式指示 */}
+                <div className="flex items-center gap-1">
+                  {useAgent ? (
+                    <>
+                      <Brain className="w-3 h-3" />
+                      <span>Agent模式</span>
+                    </>
+                  ) : (
+                    <>
+                      <Bot className="w-3 h-3" />
+                      <span>Chat模式</span>
+                    </>
+                  )}
+                </div>
+                
                 <span>•</span>
+                
+                {/* 模型信息 */}
                 <span>模型: {selectedModel}</span>
+                
                 <span>•</span>
+                
+                {/* 连接状态 */}
                 <span className="flex items-center gap-1">
                   <div className={cn(
                     "w-1.5 h-1.5 rounded-full",
@@ -2060,13 +2938,71 @@ export default function ModernChatGPT() {  const [messages, setMessages] = useSt
                   )} />
                   {API_BASE_URL.replace('http://', '')}
                 </span>
+                
+                {/* Agent模式特定状态 */}
+                {useAgent && (
+                  <>
+                    <span>•</span>
+                    <div className="flex items-center gap-2">
+                      {enableMemory && (
+                        <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
+                          <Brain className="w-3 h-3" />
+                          <span>记忆</span>
+                        </span>
+                      )}
+                      {enableReflection && (
+                        <span className="flex items-center gap-1 text-purple-600 dark:text-purple-400">
+                          <AlertCircle className="w-3 h-3" />
+                          <span>反思</span>
+                        </span>
+                      )}
+                      {enableReactMode && (
+                        <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                          <Zap className="w-3 h-3" />
+                          <span>React</span>
+                        </span>
+                      )}
+                    </div>
+                  </>
+                )}
+                
+                {/* 功能状态 */}
+                {enableSearch && (
+                  <>
+                    <span>•</span>
+                    <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                      <Search className="w-3 h-3" />
+                      <span>搜索</span>
+                    </span>
+                  </>
+                )}
+                
+                {enableMcp && (
+                  <>
+                    <span>•</span>
+                    <span className="flex items-center gap-1 text-orange-600 dark:text-orange-400">
+                      <Wrench className="w-3 h-3" />
+                      <span>MCP</span>
+                    </span>
+                  </>
+                )}
+                
+                {/* 加载状态 */}
                 {isLoading && (
                   <>
                     <span>•</span>
                     <span className="flex items-center gap-1">
                       <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
-                      處理中...
+                      <span>{useAgent ? 'Agent处理中...' : '處理中...'}</span>
                     </span>
+                  </>
+                )}
+                
+                {/* 紧凑模式指示 */}
+                {compactMode && (
+                  <>
+                    <span>•</span>
+                    <span className="text-muted-foreground/70">紧凑模式</span>
                   </>
                 )}
               </div>
