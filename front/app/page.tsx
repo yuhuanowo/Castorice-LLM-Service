@@ -1,21 +1,25 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
-import { Send, Plus, User, Bot, Copy, PanelLeft, ChevronDown, ArrowUp, ArrowDown, Trash2, Code, Clock, Zap, Brain, Eye, Search, Wrench, Image, FileText, Loader, CheckCircle, XCircle, AlertCircle, Settings } from 'lucide-react'
+import { Send, Plus, User, Bot, Copy, PanelLeft, ChevronDown, ArrowUp, ArrowDown, Trash2, Code, Clock, Zap, Brain, Eye, Search, Wrench, Image, FileText, Loader, CheckCircle, XCircle, AlertCircle, Settings, BookOpen, MoreHorizontal, Minimize2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { motion, AnimatePresence } from 'framer-motion'
+import * as Tooltip from '@radix-ui/react-tooltip'
+import * as Separator from '@radix-ui/react-separator'
 
-// API 基礎 URL - 指向后端API服务器
-const API_BASE_URL = 'http://127.0.0.1:8000'
+// API 基礎 URL - 使用相对路径代理到后端
+const API_BASE_URL = '/api/backend'
 
 interface Message {
   id: string
@@ -63,11 +67,285 @@ interface ChatHistory {
   timestamp: string
 }
 
+// 时间分组工具函数
+const getTimeGroup = (timestamp: string): string => {
+  const now = new Date()
+  const messageDate = new Date(timestamp)
+  const diffInDays = Math.floor((now.getTime() - messageDate.getTime()) / (1000 * 60 * 60 * 24))
+  
+  if (diffInDays === 0) {
+    return '今天'
+  } else if (diffInDays === 1) {
+    return '昨天'
+  } else if (diffInDays <= 7) {
+    return '这周'
+  } else if (diffInDays <= 30) {
+    return '这个月'
+  } else if (diffInDays <= 90) {
+    return '最近三个月'
+  } else {
+    return '更早'
+  }
+}
+
+// 按时间分组聊天历史
+const groupChatsByTime = (chats: ChatHistory[]) => {
+  const groups: { [key: string]: ChatHistory[] } = {}
+  
+  chats.forEach(chat => {
+    const group = getTimeGroup(chat.timestamp)
+    if (!groups[group]) {
+      groups[group] = []
+    }
+    groups[group].push(chat)
+  })
+  
+  // 按优先级排序分组
+  const groupOrder = ['今天', '昨天', '这周', '这个月', '最近三个月', '更早']
+  return groupOrder.filter(group => groups[group]).map(group => ({
+    title: group,
+    chats: groups[group].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+  }))
+}
+const TooltipButton = ({ 
+  children, 
+  tooltip, 
+  onClick, 
+  className, 
+  variant = "secondary",
+  size = "sm",
+  disabled = false,
+  ...props 
+}: {
+  children: React.ReactNode
+  tooltip: string
+  onClick?: () => void
+  className?: string
+  variant?: "default" | "secondary" | "ghost" | "outline"
+  size?: "sm" | "default" | "lg" | "icon"
+  disabled?: boolean
+  [key: string]: any
+}) => {
+  return (
+    <Tooltip.Provider delayDuration={200}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <Button
+            variant={variant}
+            size={size}
+            onClick={onClick}
+            className={cn(
+              className,
+              "transition-all duration-200 ease-out",
+              // 修复：只保留轻微缩放，移除向上浮动
+              "hover:scale-[1.02]",
+              "active:scale-[0.98]",
+              disabled && "hover:scale-100"
+            )}
+            disabled={disabled}
+            {...props}
+          >
+            {children}
+          </Button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content
+            className="bg-popover text-popover-foreground px-3 py-2 rounded-xl text-sm shadow-lg border border-border/50 backdrop-blur-md z-50"
+            sideOffset={8}
+          >
+            {tooltip}
+            <Tooltip.Arrow className="fill-popover" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
+  )
+}
+
+const SettingsMenuItem = ({ 
+  icon: Icon, 
+  label, 
+  isActive, 
+  onClick 
+}: {
+  icon: any
+  label: string
+  isActive: boolean
+  onClick: () => void
+}) => {
+  return (
+    <motion.button
+      // 修复：移除向左移动的动画
+      whileTap={{ scale: 0.98 }}
+      onClick={onClick}
+      className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-accent/50 focus:bg-accent/50 transition-all duration-200 group"
+    >
+      <div className="flex items-center gap-2">
+        <Icon className="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
+        <span className="text-sm font-medium">{label}</span>
+      </div>
+      
+      <motion.div
+        animate={{
+          scale: isActive ? 1.1 : 1,
+          backgroundColor: isActive ? "hsl(var(--primary))" : "hsl(var(--border))"
+        }}
+        transition={{ duration: 0.2 }}
+        className="relative w-4 h-4 rounded-full border-2"
+        style={{
+          borderColor: isActive ? "hsl(var(--primary))" : "hsl(var(--border))"
+        }}
+      >
+        <AnimatePresence>
+          {isActive && (
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0 }}
+              className="absolute inset-0.5 bg-primary-foreground rounded-full"
+            />
+          )}
+        </AnimatePresence>
+      </motion.div>
+    </motion.button>
+  )
+}
+
+// 在组件内添加模型分类逻辑
+const groupModelsByProvider = (models: Model[]) => {
+  const groups: { [provider: string]: Model[] } = {}
+  
+  models.forEach(model => {
+    const provider = model.owned_by || 'unknown'
+    if (!groups[provider]) {
+      groups[provider] = []
+    }
+    groups[provider].push(model)
+  })
+  
+  // 按提供商名称排序
+  const sortedGroups = Object.keys(groups).sort().reduce((acc, key) => {
+    acc[key] = groups[key].sort((a, b) => a.name.localeCompare(b.name))
+    return acc
+  }, {} as { [provider: string]: Model[] })
+  
+  return sortedGroups
+}
+
+const getModelDeveloperIcon = (modelId: string, ownedBy: string) => {
+  const className = "w-5 h-5 object-cover rounded-md bg-white/10"
+  
+  // 根据模型ID判断真正的开发者
+  const modelId_lower = modelId.toLowerCase()
+  
+  // OpenAI 模型 (通过 GitHub 提供)
+  if (modelId_lower.includes('gpt') || modelId_lower.includes('o1') || modelId_lower.includes('chatgpt') || modelId_lower.includes('o3') || modelId_lower.includes('o4') || modelId_lower.includes('4o') || modelId_lower.includes('whisper') || modelId_lower.includes('dall-e') || modelId_lower.includes('text-embedding')) {
+    return <img src="/icons/models/chatgpt.jpeg" alt="OpenAI" className={className} />
+  }
+  
+  // Anthropic 模型 (通过 GitHub 提供)
+  if (modelId_lower.includes('claude')) {
+    return <img src="/icons/models/claude.png" alt="Anthropic" className={className} />
+  }
+  
+  // Gemini 模型
+  if (modelId_lower.includes('gemini') || ownedBy?.toLowerCase().includes('google')) {
+    return <img src="/icons/models/gemini.png" alt="Gemini" className={className} />
+  }
+
+  // Gemma 模型 
+  if (modelId_lower.includes('gemma')) {
+    return <img src="/icons/models/gemma.png" alt="Gemma" className={className} />
+  }
+  
+  // Meta 模型
+  if (modelId_lower.includes('llama') || modelId_lower.includes('meta')) {
+    return <img src="/icons/models/llama.png" alt="Meta" className={className} />
+  }
+  
+  // Microsoft 模型
+  if (modelId_lower.includes('phi') || ownedBy?.toLowerCase().includes('microsoft')) {
+    return <img src="/icons/models/microsoft.png" alt="Microsoft" className={className} />
+  }
+  
+  // Cohere 模型 (通过 GitHub 提供)
+  if (modelId_lower.includes('cohere') || modelId_lower.includes('command')) {
+    return <img src="/icons/models/cohere.png" alt="Cohere" className={className} />
+  }
+  
+  // DeepSeek 模型 (通过 GitHub 提供)
+  if (modelId_lower.includes('deepseek')) {
+    return <img src="/icons/models/deepseek.png" alt="DeepSeek" className={className} />
+  }
+  
+  // Mistral 模型
+  if (modelId_lower.includes('mistral') || modelId_lower.includes('mixtral') || modelId_lower.includes('ministral')) {
+    return <img src="/icons/models/mixtral.png" alt="Mistral AI" className={className} />
+  }
+  
+  // xAI 模型 (Grok)
+  if (modelId_lower.includes('grok') || ownedBy?.toLowerCase().includes('xai')) {
+    return <img src="/icons/models/grok.png" alt="xAI" className={className} />
+  }
+  
+  // Qwen 模型 (通过 Ollama)
+  if (modelId_lower.includes('qwen')) {
+    return <img src="/icons/models/qwen.png" alt="Qwen" className={className} />
+  }
+
+  // Nvidia 模型 
+  if (modelId_lower.includes('nvidia') || modelId_lower.includes('nemotron')) {
+    return <img src="/icons/models/nvidia.png" alt="NVIDIA" className={className} />
+  }
+  
+  // 默认图标
+}
+
+// 更新提供商图标函数 - 根据你的配置
+const getProviderIcon = (provider: string) => {
+  const className = "w-6 h-6 object-cover rounded-md bg-white/10"
+  
+  switch (provider.toLowerCase()) {
+    case 'github':
+      return <img src="/icons/providers/github.png" alt="GitHub" className={className} />
+    case 'gemini':
+    case 'google':
+      return <img src="/icons/providers/google.png" alt="Google" className={className} />
+    case 'ollama':
+      return <img src="/icons/providers/ollama.png" alt="Ollama" className={className} />
+    case 'nvidia_nim':
+    case 'nvidia':
+      return <img src="/icons/providers/nvidia.png" alt="NVIDIA" className={className} />
+    default:
+  }
+}
+
+// 更新提供商显示名称
+const getProviderDisplayName = (provider: string) => {
+  switch (provider.toLowerCase()) {
+    case 'github':
+      return 'GitHub Models'
+    case 'gemini':
+    case 'google':
+      return 'Google Gemini'
+    case 'ollama':
+      return 'Ollama'
+    case 'nvidia_nim':
+    case 'nvidia':
+      return 'NVIDIA NIM'
+    default:
+      const formatted = provider.charAt(0).toUpperCase() + provider.slice(1)
+      return formatted.length > 15 ? formatted.substring(0, 15) + '...' : formatted
+  }
+}
+
+
+
 export default function ModernChatGPT() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [selectedModel, setSelectedModel] = useState('gemini-2.0-flash-lite')
+  const [selectedModel, setSelectedModel] = useState('gpt-4o-mini')
   const [models, setModels] = useState<Model[]>([])
   const [chatHistory, setChatHistory] = useState<ChatHistory[]>([])
   const [currentChatId, setCurrentChatId] = useState<string>('')
@@ -85,7 +363,9 @@ export default function ModernChatGPT() {
   const [useAgent, setUseAgent] = useState(false)
   const [enableMemory, setEnableMemory] = useState(true)
   const [enableReflection, setEnableReflection] = useState(true)
-  const [enableReactMode, setEnableReactMode] = useState(true)  // API connection status
+  const [enableReactMode, setEnableReactMode] = useState(true)
+  
+  // API connection status
   const [apiStatus, setApiStatus] = useState<'connected' | 'disconnected' | 'testing'>('disconnected')
 
   // Raw JSON responses for debugging
@@ -97,8 +377,7 @@ export default function ModernChatGPT() {
   const [showReasoningSteps, setShowReasoningSteps] = useState<{[messageId: string]: boolean}>({})
   const [showExecutionTrace, setShowExecutionTrace] = useState<{[messageId: string]: boolean}>({})
   const [showToolDetails, setShowToolDetails] = useState<{[messageId: string]: boolean}>({})
-  
-  // 性能和统计信息
+    // 性能和统计信息
   const [messageStats, setMessageStats] = useState<{[messageId: string]: {
     processingTime?: number
     tokenCount?: number
@@ -114,8 +393,7 @@ export default function ModernChatGPT() {
   const [showTimestamps, setShowTimestamps] = useState(true)
   const [showModelInfo, setShowModelInfo] = useState(true)
   const [showPerformanceMetrics, setShowPerformanceMetrics] = useState(false)
-  
-  // Agent模式的实时状态追踪
+    // Agent模式的实时状态追踪
   const [agentStatus, setAgentStatus] = useState<{[messageId: string]: {
     currentStep?: string
     totalSteps?: number
@@ -131,11 +409,12 @@ export default function ModernChatGPT() {
     avgResponseTime: 0,
     successRate: 0,
     failureCount: 0
-  })// Auto-scroll and scroll detection
+  })
+  
+  // Auto-scroll and scroll detection
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [])
-  // 使用防抖函数处理滚动检测，减少不必要的状态更新
+  }, [])  // 使用防抖函数处理滚动检测，减少不必要的状态更新
   const debouncedCheckScrollPosition = useCallback(() => {
     if (scrollContainerRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current
@@ -158,48 +437,67 @@ export default function ModernChatGPT() {
         return prev
       })
     }
-  }, [messages.length])  // 直接使用防抖函數的引用
-  const checkScrollPositionRef = useRef(debouncedCheckScrollPosition)
+  }, []) // 移除 messages.length 依賴，避免函數重新創建
+    // 滾動檢測的穩定引用
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const isScrollingRef = useRef(false) // 追蹤是否正在滾動中
   
-  // 更新引用以確保總是使用最新的防抖函數
-  useEffect(() => {
-    checkScrollPositionRef.current = debouncedCheckScrollPosition
-  }, [debouncedCheckScrollPosition])
-  useEffect(() => {
-    if (isAtBottom) {
-      scrollToBottom()
+  // 防抖滾動檢測
+  const throttledScrollCheck = useCallback(() => {
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current)
     }
-  }, [messages.length, isAtBottom, scrollToBottom]) // 只依賴於消息數量而不是整個消息數組
+    
+    isScrollingRef.current = true
+    scrollTimeoutRef.current = setTimeout(() => {
+      debouncedCheckScrollPosition()
+      isScrollingRef.current = false
+    }, 50)
+  }, [debouncedCheckScrollPosition])
   
+  // 通用滾動到底部函數，會檢查當前滾動狀態
+  const scrollToBottomIfNeeded = useCallback(() => {
+    if (isScrollingRef.current) return // 如果正在滾動中，不進行額外滾動
+    
+    const scrollElement = scrollContainerRef.current
+    if (scrollElement) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollElement
+      const isAtBottom = scrollHeight - scrollTop - clientHeight < 150
+      
+      if (isAtBottom) {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+      }
+    }
+  }, [])
+  
+  // 當新消息到達且用戶在底部時，自動滾動
+  useEffect(() => {
+    if (isAtBottom && messages.length > 0) {
+      const timeoutId = setTimeout(scrollToBottomIfNeeded, 100) // 延遲滾動，避免與圖片載入衝突
+      
+      return () => clearTimeout(timeoutId)
+    }
+  }, [messages.length, isAtBottom, scrollToBottomIfNeeded]) // 只依賴於消息數量，避免頻繁更新
+  
+  // 設置滾動監聽器
   useEffect(() => {
     const scrollElement = scrollContainerRef.current
     if (scrollElement) {
-      // 創建一個穩定的處理函數，避免引用問題
-      const handleScroll = () => {
-        checkScrollPositionRef.current()
+      // 使用 throttled 版本避免過於頻繁的檢查
+      scrollElement.addEventListener('scroll', throttledScrollCheck, { passive: true })
+      
+      // 初始檢查滾動位置
+      const initialCheck = setTimeout(debouncedCheckScrollPosition, 200)
+      
+      return () => {
+        scrollElement.removeEventListener('scroll', throttledScrollCheck)
+        clearTimeout(initialCheck)
+        if (scrollTimeoutRef.current) {
+          clearTimeout(scrollTimeoutRef.current)
+        }
       }
-      
-      // 使用passive: true优化滚动性能
-      scrollElement.addEventListener('scroll', handleScroll, { passive: true })
-      
-      // 初始加載時檢查一次滾動位置
-      setTimeout(() => {
-        debouncedCheckScrollPosition()
-      }, 100)
-        return () => scrollElement.removeEventListener('scroll', handleScroll)
     }
-  }, [debouncedCheckScrollPosition])  // 當防抖函數改變時重新設置監聽器
-  
-  // Auto-scroll to bottom when new messages arrive, but only if already at bottom
-  useEffect(() => {
-    if (isAtBottom) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
-    // 在消息變化後檢查滾動位置，確保按鈕狀態正確
-    setTimeout(() => {
-      debouncedCheckScrollPosition()
-    }, 100)
-  }, [messages, isAtBottom, debouncedCheckScrollPosition])// Load models on component mount
+  }, [throttledScrollCheck, debouncedCheckScrollPosition])// Load models on component mount
   useEffect(() => {
     fetchModels()
     loadChatHistory()
@@ -222,10 +520,17 @@ export default function ModernChatGPT() {
       localStorage.setItem('chatHistory', JSON.stringify(chatHistory))
     }
   }, [chatHistory])
-
-  // Update chat history when messages change
+    // 追踪是否是加载历史对话的状态
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
+  // 使用 ref 追踪最后加载的历史聊天 ID，避免触发 useEffect
+  const lastLoadedHistoryChatId = useRef<string | null>(null)  // Update chat history when messages change (but not when loading history)
   useEffect(() => {
-    if (currentChatId && messages.length > 0) {
+    // 如果当前聊天是刚加载的历史聊天，跳过时间戳更新
+    if (currentChatId && currentChatId === lastLoadedHistoryChatId.current) {
+      return
+    }
+    
+    if (currentChatId && messages.length > 0 && !isLoadingHistory) {
       setChatHistory(prev => 
         prev.map(chat => 
           chat.id === currentChatId 
@@ -234,13 +539,13 @@ export default function ModernChatGPT() {
         )
       )
     }
-  }, [messages, currentChatId])
+  }, [messages, currentChatId, isLoadingHistory])
   const fetchModels = async () => {
     try {
       console.log('🔄 Fetching models from API...')
       setApiStatus('testing')
       
-      const response = await fetch(`${API_BASE_URL}/api/v1/models`, {
+      const response = await fetch(`${API_BASE_URL}/models`, {
         headers: {
           'X-API-KEY': API_KEY,
           'accept': 'application/json'
@@ -351,27 +656,33 @@ export default function ModernChatGPT() {
       }
     })
   }
-    const createNewChat = async () => {
-    // 只清空当前消息和会话ID，等待用户发送第一条消息时再创建会话
+  const createNewChat = async () => {
+    // 只清空当前消息和会话ID，等待用户发送第一条消息时再创建会话    
     setMessages([])
     setCurrentChatId('')
+    lastLoadedHistoryChatId.current = null // 清除加载聊天ID标志
     
-    console.log('🆕 Ready for new chat session (will create on first message)')
     toast.success('准备开始新对话')
   }
   const loadChat = async (chat: ChatHistory) => {
     // 设置当前会话ID
     setCurrentChatId(chat.id)
     
-    // 优先尝试从服务器加载最新数据
+    // 设置加载历史对话标志和记录加载的聊天ID
+    setIsLoadingHistory(true)
+    lastLoadedHistoryChatId.current = chat.id// 优先尝试从服务器加载最新数据
     try {
-      await loadSessionDetail(chat.id)
+      await loadSessionDetail(chat.id, true)
       console.log('✅ Session loaded from server')
     } catch (error) {
       // 如果服务器加载失败，使用本地缓存
       console.warn('⚠️ Failed to load from server, using local cache')
-      setMessages(chat.messages)
-    }
+      setMessages(chat.messages)    }
+      // 重置加载历史对话标志（使用 setTimeout 确保在消息设置后执行）
+    setTimeout(() => {
+      setIsLoadingHistory(false)
+      // 注意：我们不清除 lastLoadedHistoryChatId.current，让它继续保护这个聊天不被更新时间戳
+    }, 100)
   }
   const deleteChat = async (chatId: string) => {
     // 尝试从服务器删除
@@ -383,12 +694,17 @@ export default function ModernChatGPT() {
       setChatHistory(prev => prev.filter(chat => chat.id !== chatId))
       if (currentChatId === chatId) {
         setMessages([])
-        setCurrentChatId('')      }
+        setCurrentChatId('')
+      }
       toast.success('对话已删除')
     }
   }
+  
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return
+
+    // 清除历史聊天ID标志，允许新消息更新时间戳
+    lastLoadedHistoryChatId.current = null
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -425,10 +741,9 @@ export default function ModernChatGPT() {
       } else {
         console.log('📝 Using existing session:', sessionId)
       }
-
       const endpoint = useAgent 
-        ? `${API_BASE_URL}/api/v1/agent/`
-        : `${API_BASE_URL}/api/v1/chat/completions`
+        ? `/api/agent/`
+        : `${API_BASE_URL}/chat/completions`
 
       console.log('🎯 API endpoint:', endpoint)
       console.log('🔧 useAgent state:', useAgent)
@@ -590,7 +905,7 @@ export default function ModernChatGPT() {
       const errorDetails = {
         error: error instanceof Error ? error.message : '發生未知錯誤',
         timestamp: new Date().toISOString(),
-        endpoint: useAgent ? `${API_BASE_URL}/api/v1/agent/` : `${API_BASE_URL}/api/v1/chat/completions`,
+        endpoint: useAgent ? `/api/agent/` : `${API_BASE_URL}/chat/completions`,
         mode: useAgent ? 'Agent' : 'Chat',
         model: selectedModel,
         apiKey: API_KEY,
@@ -724,7 +1039,7 @@ export default function ModernChatGPT() {
       console.log('🔍 Testing API connection...')
       
       // Test models endpoint
-      const modelsResponse = await fetch(`${API_BASE_URL}/api/v1/models`, {
+      const modelsResponse = await fetch(`${API_BASE_URL}/models`, {
         headers: {
           'X-API-KEY': API_KEY,
           'accept': 'application/json'
@@ -736,7 +1051,7 @@ export default function ModernChatGPT() {
       
       if (modelsResponse.ok) {
         // Test health endpoint instead of sending actual chat request
-        const healthResponse = await fetch(`${API_BASE_URL}/health`, {
+        const healthResponse = await fetch(`/api/health`, {
           headers: {
             'accept': 'application/json'
           },
@@ -825,7 +1140,7 @@ export default function ModernChatGPT() {
       console.log('🔄 Restoring images for session:', sessionId)
       
       // 获取会话的所有图片
-      const response = await fetch(`${API_BASE_URL}/api/v1/session/${sessionId}/images`, {
+      const response = await fetch(`${API_BASE_URL}/session/${sessionId}/images`, {
         headers: {
           'X-API-KEY': API_KEY,
           'accept': 'application/json'
@@ -838,9 +1153,11 @@ export default function ModernChatGPT() {
         
         if (imageData.image_urls && imageData.image_urls.length > 0) {
           // 为每个消息检查是否需要添加图片
-          const updatedMessages = messages.map((message, index) => {
-            // 检查消息是否已经包含图片
-            const hasImage = message.content.includes('![') || message.content.includes('/api/v1/images/')
+          const updatedMessages = messages.map((message, index) => {              
+            // 检查消息是否已经包含图片（兼容新旧格式）
+            const hasImage = message.content.includes('![') || 
+                            message.content.includes('/images/') || 
+                            message.content.includes('/api/v1/images/')
             
             // 如果是助手消息且没有图片，尝试匹配对应的图片
             if (message.role === 'assistant' && !hasImage) {
@@ -874,7 +1191,7 @@ export default function ModernChatGPT() {
   // Session management functions
   const createNewSession = async (): Promise<string> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/sessions`, {
+      const response = await fetch(`${API_BASE_URL}/sessions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -906,7 +1223,7 @@ export default function ModernChatGPT() {
 
   const loadChatSessions = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/sessions/test?limit=20`, {
+      const response = await fetch(`${API_BASE_URL}/sessions/test?limit=20`, {
         headers: {
           'X-API-KEY': API_KEY,
           'accept': 'application/json'
@@ -941,9 +1258,9 @@ export default function ModernChatGPT() {
       console.log('📭 Set empty session list due to server error')
     }
   }
-  const loadSessionDetail = async (sessionId: string) => {
+  const loadSessionDetail = async (sessionId: string, isHistoryLoad: boolean = false) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/sessions/test/${sessionId}`, {
+      const response = await fetch(`${API_BASE_URL}/sessions/test/${sessionId}`, {
         headers: {
           'X-API-KEY': API_KEY,
           'accept': 'application/json'
@@ -969,7 +1286,7 @@ export default function ModernChatGPT() {
         }        // 获取会话图片列表以便匹配 attachment 引用
         let sessionImageUrls: string[] = []
         try {
-          const imageResponse = await fetch(`${API_BASE_URL}/api/v1/session/${sessionId}/images`, {
+          const imageResponse = await fetch(`${API_BASE_URL}/session/${sessionId}/images`, {
             headers: {
               'X-API-KEY': API_KEY,
               'accept': 'application/json'
@@ -1013,11 +1330,11 @@ export default function ModernChatGPT() {
                 }
               }
               console.log('🔄 Built raw_response from enhanced fields for message:', message.id)
-            }
-            // 兼容舊版本：检查消息内容是否包含图片引用
-            else if (message.content.includes('/api/v1/images/')) {
-              // 从消息内容中提取图片URL
-              const imageUrlMatch = message.content.match(/!\[.*?\]\((\/api\/v1\/images\/[^)]+)\)/)
+            }              
+            // 兼容舊版本：检查消息内容是否包含图片引用（新旧格式）
+            else if (message.content.includes('/images/') || message.content.includes('/api/v1/images/')) {
+              // 从消息内容中提取图片URL（兼容新旧格式）
+              const imageUrlMatch = message.content.match(/!\[.*?\]\((\/(?:api\/v1\/)?images\/[^)]+)\)/)
               if (imageUrlMatch) {
                 restoredRawResponses[message.id] = {
                   image_data_uri: imageUrlMatch[1],
@@ -1048,25 +1365,46 @@ export default function ModernChatGPT() {
                     message: message.content.replace(/!\[.*?\]\(attachment[^)]*\)/, '').trim()
                   }
                 }
-              }
-            }
+              }            }
           }
         })
+        
         setRawResponses(restoredRawResponses)
         console.log('📦 Restored rawResponses:', Object.keys(restoredRawResponses).length, 'entries')
         
+        // 如果是加载历史对话，设置标志以防止时间戳更新
+        if (isHistoryLoad) {
+          setIsLoadingHistory(true)
+        }
+        
         setMessages(sessionMessages)
         setCurrentChatId(sessionId)
+        
+        // 重置标志
+        if (isHistoryLoad) {
+          setTimeout(() => setIsLoadingHistory(false), 100)
+        }
+        
         return true
       }
       
     } catch (error) {
-      console.error('❌ Error loading session detail:', error)
-      // 如果失败，尝试从本地历史加载
+      console.error('❌ Error loading session detail:', error)      // 如果失败，尝试从本地历史加载
       const localChat = chatHistory.find(chat => chat.id === sessionId)
       if (localChat) {
+        // 如果是加载历史对话，设置标志以防止时间戳更新
+        if (isHistoryLoad) {
+          setIsLoadingHistory(true)
+        }
+        
         setMessages(localChat.messages)
         setCurrentChatId(sessionId)
+        
+        // 重置标志
+        if (isHistoryLoad) {
+          setTimeout(() => setIsLoadingHistory(false), 100)
+        }
+        
         console.log('🔄 Loaded from local cache:', sessionId)
         return true
       }
@@ -1076,7 +1414,7 @@ export default function ModernChatGPT() {
 
   const deleteSessionFromServer = async (sessionId: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/sessions/test/${sessionId}`, {
+      const response = await fetch(`${API_BASE_URL}/sessions/test/${sessionId}`, {
         method: 'DELETE',
         headers: {
           'X-API-KEY': API_KEY,
@@ -1115,7 +1453,7 @@ export default function ModernChatGPT() {
 
   const loadUserSessionsFromAPI = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/sessions/test`, {
+      const response = await fetch(`${API_BASE_URL}/sessions/test`, {
         headers: {
           'X-API-KEY': API_KEY,
         },
@@ -1223,7 +1561,10 @@ export default function ModernChatGPT() {
           session_context: {
             total_messages: messages.length,
             agent_messages: messages.filter(m => m.mode === 'agent').length,
-            has_images: messages.some(m => m.generated_image || m.content.includes('![') || m.content.includes('/api/v1/images/')),
+            has_images: messages.some(m => m.generated_image || 
+                                       m.content.includes('![') || 
+                                       m.content.includes('/images/') ||
+                                       m.content.includes('/api/v1/images/')),
             tools_previously_used: Array.from(new Set(
               messages.flatMap(m => m.tools_used?.map(tool => tool.name) || [])
             ))
@@ -1298,7 +1639,7 @@ export default function ModernChatGPT() {
   // 会话管理API调用函数
   const createNewSessionAPI = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/sessions`, {
+      const response = await fetch(`${API_BASE_URL}/sessions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1326,7 +1667,7 @@ export default function ModernChatGPT() {
 
   const loadSessionFromAPI = async (sessionId: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/sessions/test/${sessionId}`, {
+      const response = await fetch(`${API_BASE_URL}/sessions/test/${sessionId}`, {
         headers: {
           'X-API-KEY': API_KEY,
         },
@@ -1533,9 +1874,24 @@ export default function ModernChatGPT() {
       }
       
       // 检查是否有本地图片URL
-      if (data.local_image_url && !imageDataUri) {
-        console.log('� Found local image URL:', data.local_image_url)
-        const localImageUrl = `${API_BASE_URL}${data.local_image_url}`
+      if (data.local_image_url && !imageDataUri) {        
+        console.log('📷 Found local image URL:', data.local_image_url)
+        let localImageUrl = data.local_image_url
+        
+        // 如果不是完整URL，添加API_BASE_URL前缀
+        if (!localImageUrl.startsWith('http') && !localImageUrl.startsWith('/api/backend/')) {
+          // 处理各种可能的格式
+          if (localImageUrl.startsWith('/api/v1/images/')) {
+            localImageUrl = localImageUrl.replace('/api/v1/images/', '/images/')
+          }
+          if (!localImageUrl.startsWith('/')) {
+            localImageUrl = '/' + localImageUrl
+          }
+          localImageUrl = `${API_BASE_URL}${localImageUrl}`
+        } else if (localImageUrl.startsWith('/api/backend/')) {
+          // 如果已经包含 /api/backend/ 前缀，直接使用
+          localImageUrl = localImageUrl
+        }
         
         if (message) {
           message += `\n\n![生成的图片](${localImageUrl})`
@@ -1555,11 +1911,16 @@ export default function ModernChatGPT() {
       return '解析响应时出错'
     }
   }
-
   // 抽取图片处理逻辑到独立函数
   const processImageInMessage = (message: string, imageDataUri: string): string => {
-    // 如果image_data_uri是MongoDB URL格式（如 /api/v1/images/{id}）
+    // 兼容旧格式：如果是 /api/v1/images/ 格式，转换为新格式
     if (imageDataUri.startsWith('/api/v1/images/')) {
+      console.log('📊 Detected old format MongoDB image URL, converting:', imageDataUri)
+      imageDataUri = imageDataUri.replace('/api/v1/images/', '/images/')
+    }
+    
+    // 如果image_data_uri是MongoDB URL格式（如 /images/{id}）
+    if (imageDataUri.startsWith('/images/')) {
       console.log('📊 Detected MongoDB image URL:', imageDataUri)
       
       // 检查消息中是否已包含图片
@@ -1743,9 +2104,11 @@ export default function ModernChatGPT() {
       console.log('🔄 Initializing session images...')
       
       // 检查当前会话是否需要图片恢复
-      if (currentChatId && messages.length > 0) {
+      if (currentChatId && messages.length > 0) {          
         const hasAnyImages = messages.some(msg => 
-          msg.content.includes('![') || msg.content.includes('/api/v1/images/')
+          msg.content.includes('![') || 
+          msg.content.includes('/images/') ||
+          msg.content.includes('/api/v1/images/')
         )
         
         // 如果没有图片但有助手消息，尝试恢复图片
@@ -1768,12 +2131,15 @@ export default function ModernChatGPT() {
     if (currentChatId && messages.length > 0) {
       initializeSessionImages()
     }  }, [currentChatId]) // 只在会话ID变化时触发
-
   // Update chat history when messages change - 使用防抖優化
   const updateChatHistoryRef = useRef<NodeJS.Timeout | null>(null)
-  
-  useEffect(() => {
-    if (currentChatId && messages.length > 0) {
+    useEffect(() => {
+    // 如果当前聊天是刚加载的历史聊天，跳过时间戳更新
+    if (currentChatId && currentChatId === lastLoadedHistoryChatId.current) {
+      return
+    }
+    
+    if (currentChatId && messages.length > 0 && !isLoadingHistory) {
       // 清除之前的定時器
       if (updateChatHistoryRef.current) {
         clearTimeout(updateChatHistoryRef.current)
@@ -1797,7 +2163,7 @@ export default function ModernChatGPT() {
         clearTimeout(updateChatHistoryRef.current)
       }
     }
-  }, [messages.length, currentChatId]) // 只依賴於消息數量而不是整個消息數組
+  }, [messages.length, currentChatId, isLoadingHistory]) // 添加 isLoadingHistory 依賴
 
   return (
     <div className="flex h-screen bg-background">
@@ -1805,7 +2171,8 @@ export default function ModernChatGPT() {
       <div className={cn(
         "transition-all duration-300 ease-linear bg-muted/30 border-r border-border flex flex-col",
         sidebarOpen ? "w-64" : "w-0 overflow-hidden"
-      )}>        {/* Sidebar Header */}
+      )}>        
+      {/* Sidebar Header */}
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 bg-primary rounded-md flex items-center justify-center">
@@ -1862,173 +2229,55 @@ export default function ModernChatGPT() {
             新对话
           </Button>
         </div>
-        
-        {/* Chat History */}
+          {/* Chat History */}
         <div className="flex-1 overflow-y-auto px-3">
-          <div className="text-xs text-muted-foreground mb-3 px-2">最近对话</div>
-          <div className="space-y-1">
-            {chatHistory.map((chat) => (
-              <div
-                key={chat.id}
-                className={cn(
-                  "group relative flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-sm hover:bg-accent",
-                  currentChatId === chat.id && "bg-accent"
-                )}
-                onClick={() => loadChat(chat)}
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="truncate font-medium text-foreground">{chat.title}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {new Date(chat.timestamp).toLocaleString('zh-CN', {
-                      month: '2-digit',
-                      day: '2-digit',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    deleteChat(chat.id)
-                  }}
-                  className="opacity-0 group-hover:opacity-100 h-6 w-6 shrink-0"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </Button>
+          {groupChatsByTime(chatHistory).map((group) => (
+            <div key={group.title} className="mb-6">
+              <div className="text-xs text-muted-foreground mb-3 px-2 font-medium sticky top-0 bg-background/95 backdrop-blur-sm py-1">
+                {group.title}
               </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Settings Panel */}
+              <div className="space-y-1">
+                {group.chats.map((chat) => (
+                  <div
+                    key={chat.id}
+                    className={cn(
+                      "group relative flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-sm hover:bg-accent",
+                      currentChatId === chat.id && "bg-accent"
+                    )}
+                    onClick={() => loadChat(chat)}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate font-medium text-foreground">{chat.title}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {new Date(chat.timestamp).toLocaleString('zh-TW', {
+                          month: '2-digit',
+                          day: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        deleteChat(chat.id)
+                      }}
+                      className="opacity-0 group-hover:opacity-100 h-6 w-6 shrink-0"
+                    >                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>        {/* Settings Panel */}
         <div className="p-3 border-t border-border">
           <div className="space-y-4">
-            {/* Model Selection */}
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">模型</Label>
-              <Select value={selectedModel} onValueChange={setSelectedModel}>
-                <SelectTrigger className="h-8 text-xs bg-background border-input">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {models.map((model) => (
-                    <SelectItem key={model.id} value={model.id} className="text-xs">
-                      {model.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            
-            {/* Settings Toggles */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground">Agent模式</Label>
-                <Switch
-                  checked={useAgent}
-                  onCheckedChange={setUseAgent}
-                  className="scale-75"
-                />
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground">搜索功能</Label>
-                <Switch
-                  checked={enableSearch}
-                  onCheckedChange={setEnableSearch}
-                  className="scale-75"
-                />
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground">MCP工具</Label>
-                <Switch
-                  checked={enableMcp}
-                  onCheckedChange={setEnableMcp}
-                  className="scale-75"
-                />
-              </div>              {/* 显示增强模式切换 */}
-              <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground">紧凑模式</Label>
-                <Switch
-                  checked={compactMode}
-                  onCheckedChange={setCompactMode}
-                  className="scale-75"
-                />
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground">显示时间</Label>
-                <Switch
-                  checked={showTimestamps}
-                  onCheckedChange={setShowTimestamps}
-                  className="scale-75"
-                />
-              </div>
-                <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground">模型信息</Label>
-                <Switch
-                  checked={showModelInfo}
-                  onCheckedChange={setShowModelInfo}
-                  className="scale-75"
-                />
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground">性能指标</Label>
-                <Switch
-                  checked={showPerformanceMetrics}
-                  onCheckedChange={setShowPerformanceMetrics}
-                  className="scale-75"
-                />
-              </div>
-
-              {useAgent && (
-                <>
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs text-muted-foreground">记忆功能</Label>
-                    <Switch
-                      checked={enableMemory}
-                      onCheckedChange={setEnableMemory}
-                      className="scale-75"
-                    />
-                  </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs text-muted-foreground">反思模式</Label>
-                    <Switch
-                      checked={enableReflection}
-                      onCheckedChange={setEnableReflection}
-                      className="scale-75"
-                    />
-                  </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs text-muted-foreground">React模式</Label>
-                    <Switch
-                      checked={enableReactMode}
-                      onCheckedChange={setEnableReactMode}
-                      className="scale-75"
-                    />
-                  </div>
-                </>
-              )}
-
-              {!useAgent && (
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs text-muted-foreground">禁用历史</Label>
-                  <Switch
-                    checked={disableHistory}
-                    onCheckedChange={setDisableHistory}
-                    className="scale-75"
-                  />
-                </div>              )}
-            </div>
               {/* Action Buttons */}
-            <div className="pt-3 border-t border-border space-y-2">              <Button
+            <div className="space-y-2">              
+              <Button
                 variant="outline"
                 size="sm"
                 onClick={clearAllHistory}
@@ -2127,10 +2376,11 @@ export default function ModernChatGPT() {
             </div>
           </div>
         </div>
-      </div>{/* Main Chat Area */}
+      </div>
+      {/* Main Chat Area - 移除顶部分隔线 */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
-        <div className="h-14 border-b border-border flex items-center justify-between px-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        {/* Header - 移除底部边框 */}
+        <div className="h-14 flex items-center justify-between px-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <div className="flex items-center gap-3">
             {!sidebarOpen && (
               <Button
@@ -2139,22 +2389,96 @@ export default function ModernChatGPT() {
                 onClick={() => setSidebarOpen(true)}
                 className="h-8 w-8"
               >
-                <PanelLeft className="w-4 h-4" />              </Button>
+                <PanelLeft className="w-4 h-4" />
+              </Button>
             )}
             
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-semibold">AI Assistant</h1>              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <div className="flex items-center gap-4">
+
+            
+            {/* Model Selector - 修复图标调用问题 */}
+            <Select value={selectedModel} onValueChange={setSelectedModel}>
+              <SelectTrigger className="w-[280px] h-10 bg-background/80 border-border/60 hover:border-border/80 rounded-xl text-sm font-medium transition-all duration-200 hover:shadow-sm">
+                <SelectValue placeholder="选择模型">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {/* 使用模型开发者图标 */}
+                    {getModelDeveloperIcon(selectedModel, models.find(m => m.id === selectedModel)?.owned_by || '')}
+                    <span className="truncate font-medium">
+                      {models.find(m => m.id === selectedModel)?.name || '选择模型'}
+                    </span>
+                  </div>
+                </SelectValue>
+              </SelectTrigger>
+              
+              <SelectContent className="w-[320px] max-h-[500px] bg-background/95 backdrop-blur-xl border-border/50 rounded-xl shadow-xl overflow-hidden">
+                {Object.entries(groupModelsByProvider(models)).map(([provider, providerModels]) => (
+                  <div key={provider}>
+                    {/* Provider Header - 使用提供商图标 */}
+                    <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm">
+                      <div className="flex items-center gap-2 px-4 py-3 border-b border-border/20">
+                        {getProviderIcon(provider)}
+                        <span className="font-semibold text-sm">{getProviderDisplayName(provider)}</span>
+                        <span className="ml-auto text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md">
+                          {providerModels.length}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    {/* Models - 修复选中外框被裁切的问题 */}
+                    <div className="py-1 px-1">
+                      {providerModels.map((model) => (
+                        <SelectItem 
+                          key={model.id} 
+                          value={model.id}
+                          className={cn(
+                            "rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/80 focus:bg-accent/80 data-[highlighted]:bg-accent/60 mx-1 my-1 px-3 py-2.5",
+                            // 修复：为选中状态的ring留出足够空间，并确保不被裁切
+                            selectedModel === model.id && "ring-2 ring-primary/60 bg-primary/10 border-primary/30 ring-inset"
+                          )}
+                        >
+                          <div className="flex items-center gap-3 min-w-0 w-full">
+                            {/* 使用模型开发者图标而不是提供商图标 */}
+                            {getModelDeveloperIcon(model.id, model.owned_by)}
+                            <div className="min-w-0 flex-1">
+                              <div className="font-medium text-sm truncate">{model.name}</div>
+                              <div className="text-xs text-muted-foreground truncate">{model.id}</div>
+                            </div>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                
+                {/* Footer - 现在在 SelectContent 内部的底部 */}
+                <div className="sticky bottom-0 bg-background/95 backdrop-blur-sm border-t border-border/20 px-4 py-3">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>共 {models.length} 个模型</span>
+                    <div className="flex items-center gap-1.5">
+                      <div className={cn(
+                        "w-2 h-2 rounded-full",
+                        apiStatus === 'connected' && "bg-green-500",
+                        apiStatus === 'disconnected' && "bg-red-500",
+                        apiStatus === 'testing' && "bg-yellow-500 animate-pulse"
+                      )} />
+                      <span>
+                        {apiStatus === 'connected' && '已连接'}
+                        {apiStatus === 'disconnected' && '未连接'}
+                        {apiStatus === 'testing' && '测试中'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </SelectContent>
+            </Select>
+              {/* Connection Status Indicator */}
+              <div className="flex items-center gap-1">
                 <div className={cn(
                   "w-2 h-2 rounded-full",
                   apiStatus === 'connected' && "bg-green-500",
                   apiStatus === 'disconnected' && "bg-red-500",
                   apiStatus === 'testing' && "bg-yellow-500 animate-pulse"
                 )} />
-                <span>
-                  {apiStatus === 'connected' && '已連接'}
-                  {apiStatus === 'disconnected' && '未連接'}
-                  {apiStatus === 'testing' && '連接中...'}
-                </span>
               </div>
             </div>
           </div>
@@ -2162,12 +2486,11 @@ export default function ModernChatGPT() {
           <div className="flex items-center gap-2">
             <ThemeToggle />
           </div>
-        </div>
-
-        {/* Messages Area */}
+        </div>        {/* Messages Area */}
         <div 
           ref={scrollContainerRef}
-          className="flex-1 overflow-y-auto"
+          data-scroll-container="true"
+          className="flex-1 overflow-y-auto scroll-container"
         >
           {messages.length === 0 ? (
             <div className="h-full flex items-center justify-center">
@@ -2184,9 +2507,9 @@ export default function ModernChatGPT() {
               </div>
             </div>
           ) : (
-            <div className="max-w-4xl mx-auto px-4">              {messages.map((message) => (
+            <div className="max-w-4xl mx-auto px-4 messages-container">              {messages.map((message) => (
                 <MessageErrorBoundary key={message.id} messageId={message.id}>
-                  <div className="group py-6 border-b border-border/50 last:border-0">
+                  <div className="group py-6 last:border-0 message-item">
                   <div className="flex gap-4">
                     {/* Avatar */}
                     <div className="flex-shrink-0">
@@ -2272,10 +2595,12 @@ export default function ModernChatGPT() {
                           </div>
                         </div>
                       )}
-                        {/* Message Content */}
-                      <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-p:leading-relaxed prose-li:my-1"><ReactMarkdown 
+                        {/* Message Content */}                      
+                      <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-p:leading-relaxed prose-li:my-1">
+                        <ReactMarkdown 
                           remarkPlugins={[remarkGfm]}
-                          rehypePlugins={[rehypeRaw]}urlTransform={(url) => {
+                          rehypePlugins={[rehypeRaw]}
+                          urlTransform={(url) => {
                             // 处理不同类型的URL
                             console.log('🔄 Processing URL in ReactMarkdown:', url.substring(0, 50))
                             
@@ -2287,13 +2612,21 @@ export default function ModernChatGPT() {
                               if (rawResponses[message.id]?.image_data_uri) {
                                 const imageUri = rawResponses[message.id].image_data_uri
                                 console.log('✅ Found image data for attachment:', imageUri.substring(0, 50))
-                                
-                                // 如果已经是完整的URL，直接返回
+                                  // 如果已经是完整的URL，直接返回
                                 if (imageUri.startsWith('http://') || imageUri.startsWith('https://')) {
                                   return imageUri
-                                }
-                                // 如果是相对路径，转换为完整URL
+                                }                                
+                                // 兼容旧格式：如果是 /api/v1/images/ 格式，转换为新格式
                                 else if (imageUri.startsWith('/api/v1/images/')) {
+                                  const newImageUri = imageUri.replace('/api/v1/images/', '/images/')
+                                  return `${API_BASE_URL}${newImageUri}`
+                                }
+                                // 如果已经包含代理前缀，直接返回
+                                else if (imageUri.startsWith('/api/backend/')) {
+                                  return imageUri
+                                }
+                                // 如果是相对路径，转换为完整URL                                
+                                else if (imageUri.startsWith('/images/')) {
                                   return `${API_BASE_URL}${imageUri}`
                                 }
                                 // 如果是data URI，直接返回
@@ -2301,8 +2634,7 @@ export default function ModernChatGPT() {
                                   return imageUri
                                 }
                                 else {
-                                  return imageUri
-                                }
+                                  return imageUri                                }
                               } else {
                                 console.warn('⚠️ No image data URI found for message:', message.id)
                                 console.warn('📦 Available rawResponses keys:', Object.keys(rawResponses))
@@ -2310,17 +2642,27 @@ export default function ModernChatGPT() {
                                 // 返回空字符串而不是空的 attachment，这样可以避免显示破损的图片
                                 return ''
                               }
-                            }
-                            
-                            // 如果是API图片URL，转换为完整URL
+                            }                            
+                            // 兼容旧格式：如果是API图片URL，转换为完整URL
                             if (url.startsWith('/api/v1/images/')) {
+                              console.log('🔄 Converting old API image URL to new format:', url)
+                              const newUrl = url.replace('/api/v1/images/', '/images/')
+                              return `${API_BASE_URL}${newUrl}`
+                            }
+                            // 如果已经包含代理前缀，直接返回
+                            else if (url.startsWith('/api/backend/')) {
+                              console.log('🔄 URL already has proxy prefix:', url)
+                              return url
+                            }
+                            // 如果是新格式的API图片URL，转换为完整URL
+                            else if (url.startsWith('/images/')) {
                               console.log('🔄 Converting API image URL to full URL:', url)
                               return `${API_BASE_URL}${url}`
                             }
                             
                             return url
                           }}
-                          components={{                            img: (props) => {
+                          components={{img: (props) => {
                               console.log('🖼️ ReactMarkdown img props:', 
                                 props.src 
                                   ? (typeof props.src === 'string' 
@@ -2825,190 +3167,484 @@ export default function ModernChatGPT() {
                       </div>
                     </div>
                   </div>
-                </div>
+                </div>              )}
+              
+              <div ref={messagesEndRef} data-messages-end="true" />
+            </div>          )}
+        </div>        
+        {/* Input Area - 修复按钮点击和状态栏高度 */}
+<div className="bg-background">
+  <div className="max-w-4xl mx-auto p-4 relative">
+    {/* Scroll to bottom button - 相对于输入区域定位 */}
+    <AnimatePresence>
+      {showScrollToBottom && (
+        <motion.div
+          initial={{ opacity: 0, y: 20, scale: 0.8 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 10, scale: 0.9 }}
+          transition={{ 
+            type: "spring", 
+            stiffness: 400, 
+            damping: 25,
+            duration: 0.3
+          }}
+          className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-full mb-4 z-50"
+        >
+          <Button
+            onClick={scrollToBottom}
+            variant="ghost"
+            className="
+              flex items-center gap-2 px-4 py-2
+              bg-background/90 backdrop-blur-xl 
+              border border-border/50 
+              rounded-2xl shadow-xl hover:shadow-2xl 
+              text-foreground hover:text-foreground
+              font-medium text-sm
+              transition-all duration-300 ease-out
+              hover:border-primary/30 hover:scale-[1.02]
+              active:scale-[0.98]
+            "
+          >
+            <motion.div
+              animate={{ y: [0, 3, 0] }}
+              transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+            >
+              <ArrowDown className="w-4 h-4" />
+            </motion.div>
+            <span>回到底部</span>
+          </Button>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
+      className="relative"
+    >
+      {/* 输入框容器 */}
+      <div className="
+        relative flex flex-col w-full 
+        bg-gradient-to-br from-muted/20 via-muted/10 to-muted/20 
+        border border-border/50
+        rounded-3xl shadow-lg
+        transition-all duration-500 ease-out
+        hover:shadow-xl hover:border-border/70
+        focus-within:shadow-xl focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10
+        backdrop-blur-sm
+      ">
+        {/* 主输入区域 */}
+        <div className="relative">
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onCompositionStart={handleCompositionStart}
+            onCompositionUpdate={handleCompositionUpdate}
+            onCompositionEnd={handleCompositionEnd}
+            placeholder="发送消息到你的 AI 助手..."
+            className="
+              w-full min-h-[60px] max-h-40 px-6 py-4 pr-20 
+              bg-transparent border-none resize-none 
+              focus-visible:outline-none 
+              placeholder:text-muted-foreground/50 text-foreground 
+              rounded-3xl text-base leading-relaxed
+              transition-all duration-300
+              selection:bg-primary/20
+            "
+            disabled={isLoading}
+            rows={1}
+          />
+          
+          {/* 发送按钮区域 - 移除motion包装 */}
+          <div className="absolute right-3 bottom-3 flex gap-2 items-center">
+            <AnimatePresence>
+              {isLoading && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8, x: 20 }}
+                  animate={{ opacity: 1, scale: 1, x: 0 }}
+                  exit={{ opacity: 0, scale: 0.8, x: 20 }}
+                  transition={{ duration: 0.2, ease: "easeOut" }}
+                >
+                 <TooltipButton
+                  onClick={cancelRequest}
+                  tooltip="取消请求"
+                  variant="ghost"
+                  className="
+                    h-10 w-10 rounded-2xl 
+                    bg-destructive/10 hover:bg-destructive/20 
+                    text-destructive hover:text-destructive
+                    border border-destructive/20
+                  "
+                >
+                  <X className="w-4 h-4" />
+                </TooltipButton>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            
+            <TooltipButton
+              onClick={sendMessage}
+              disabled={!input.trim() || isLoading}
+              tooltip={!input.trim() ? "请输入消息" : isLoading ? "处理中..." : "发送消息"}
+              className={cn(
+                "h-10 w-10 rounded-2xl transition-all duration-300 ease-out relative overflow-hidden",
+                input.trim() && !isLoading
+                  ? "bg-primary text-primary-foreground shadow-lg hover:shadow-xl hover:shadow-primary/25"
+                  : "bg-muted/50 text-muted-foreground cursor-not-allowed"
+              )}
+            >
+              {/* 按钮发光效果 */}
+              {input.trim() && !isLoading && (
+                <motion.div
+                  className="absolute inset-0 bg-gradient-to-r from-primary/20 to-primary/40 rounded-2xl"
+                  animate={{ opacity: [0.5, 1, 0.5] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                />
               )}
               
-              <div ref={messagesEndRef} />
-            </div>
-          )}
-        </div>        {/* Input Area */}
-        <div className="border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="max-w-4xl mx-auto p-4">
-            {/* Scroll to bottom button */}            <div className={`
-              fixed bottom-24 left-1/2 transform -translate-x-1/2 z-50
-              transition-all duration-500 ease-in-out
-              ${showScrollToBottom 
-                ? 'opacity-100 translate-y-0 pointer-events-auto' 
-                : 'opacity-0 translate-y-4 pointer-events-none'
-              }
-            `}>
-              <Button
-                onClick={scrollToBottom}
-                className="
-                  flex items-center gap-2 px-4 py-2 h-10
-                  bg-background/80 backdrop-blur-md 
-                  border border-border/50 
-                  rounded-full shadow-lg hover:shadow-xl 
-                  transition-all duration-300 ease-out
-                  hover:bg-background/90 hover:scale-105
-                  text-foreground hover:text-foreground
-                  font-medium text-sm
-                "
-                variant="ghost"
+              <motion.div
+                animate={isLoading ? { rotate: 360 } : {}}
+                transition={isLoading ? { duration: 1, repeat: Infinity, ease: "linear" } : {}}
+                className="relative z-10"
               >
-                <ArrowDown className="w-4 h-4" />
-                <span>回到底部</span>
-              </Button>
-            </div>
-
-            <div className="relative">
-              {/* Modern input area with Morphic-style rounded design */}
-              <div className="relative flex w-full bg-muted/30 rounded-3xl border border-input shadow-sm">                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  onCompositionStart={handleCompositionStart}
-                  onCompositionUpdate={handleCompositionUpdate}
-                  onCompositionEnd={handleCompositionEnd}
-                  placeholder="发送消息..."
-                  className="w-full min-h-12 max-h-32 px-4 py-3 pr-12 bg-transparent border-none resize-none focus-visible:outline-none placeholder:text-muted-foreground text-foreground rounded-3xl"
-                  disabled={isLoading}
-                  rows={1}/>
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1">
-                  {isLoading && (
-                    <Button
-                      onClick={cancelRequest}
-                      variant="outline"
-                      className="h-8 w-8 rounded-full bg-background border-border"
-                      size="icon"
-                    >
-                      <span className="text-xs">✕</span>
-                    </Button>
-                  )}
-                  <Button
-                    onClick={sendMessage}
-                    disabled={!input.trim() || isLoading}
-                    className={cn(
-                      "h-8 w-8 rounded-full transition-all",
-                      isLoading && "opacity-50 cursor-not-allowed"
-                    )}
-                    size="icon"
-                  >
-                    {isLoading ? (
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <Send className="w-4 h-4" />
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </div>              {/* Enhanced Status Bar */}
-            <div className="flex items-center justify-center mt-3 text-xs text-muted-foreground">
-              <div className="flex items-center gap-2 flex-wrap justify-center">
-                {/* 模式指示 */}
-                <div className="flex items-center gap-1">
-                  {useAgent ? (
-                    <>
-                      <Brain className="w-3 h-3" />
-                      <span>Agent模式</span>
-                    </>
-                  ) : (
-                    <>
-                      <Bot className="w-3 h-3" />
-                      <span>Chat模式</span>
-                    </>
-                  )}
-                </div>
-                
-                <span>•</span>
-                
-                {/* 模型信息 */}
-                <span>模型: {selectedModel}</span>
-                
-                <span>•</span>
-                
-                {/* 连接状态 */}
-                <span className="flex items-center gap-1">
-                  <div className={cn(
-                    "w-1.5 h-1.5 rounded-full",
-                    apiStatus === 'connected' && "bg-green-500",
-                    apiStatus === 'disconnected' && "bg-red-500",
-                    apiStatus === 'testing' && "bg-yellow-500 animate-pulse"
-                  )} />
-                  {API_BASE_URL.replace('http://', '')}
-                </span>
-                
-                {/* Agent模式特定状态 */}
-                {useAgent && (
-                  <>
-                    <span>•</span>
-                    <div className="flex items-center gap-2">
-                      {enableMemory && (
-                        <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
-                          <Brain className="w-3 h-3" />
-                          <span>记忆</span>
-                        </span>
-                      )}
-                      {enableReflection && (
-                        <span className="flex items-center gap-1 text-purple-600 dark:text-purple-400">
-                          <AlertCircle className="w-3 h-3" />
-                          <span>反思</span>
-                        </span>
-                      )}
-                      {enableReactMode && (
-                        <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
-                          <Zap className="w-3 h-3" />
-                          <span>React</span>
-                        </span>
-                      )}
-                    </div>
-                  </>
+                {isLoading ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
                 )}
-                
-                {/* 功能状态 */}
-                {enableSearch && (
-                  <>
-                    <span>•</span>
-                    <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
-                      <Search className="w-3 h-3" />
-                      <span>搜索</span>
-                    </span>
-                  </>
-                )}
-                
-                {enableMcp && (
-                  <>
-                    <span>•</span>
-                    <span className="flex items-center gap-1 text-orange-600 dark:text-orange-400">
-                      <Wrench className="w-3 h-3" />
-                      <span>MCP</span>
-                    </span>
-                  </>
-                )}
-                
-                {/* 加载状态 */}
-                {isLoading && (
-                  <>
-                    <span>•</span>
-                    <span className="flex items-center gap-1">
-                      <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
-                      <span>{useAgent ? 'Agent处理中...' : '處理中...'}</span>
-                    </span>
-                  </>
-                )}
-                
-                {/* 紧凑模式指示 */}
-                {compactMode && (
-                  <>
-                    <span>•</span>
-                    <span className="text-muted-foreground/70">紧凑模式</span>
-                  </>
-                )}
-              </div>
-            </div>
+              </motion.div>
+            </TooltipButton>
           </div>
         </div>
+        
+        {/* 功能按钮区域 - 修复overflow问题 */}
+<div className="px-6 pb-4 pt-2">
+  <div className="flex items-center justify-between">
+    {/* 确保容器有足够的padding来容纳动画 */}
+    <div className="flex items-center gap-2 overflow-visible py-1">
+      {/* 主要功能按钮 */}
+      <div className="flex items-center gap-2">
+        <TooltipButton
+          variant={useAgent ? "default" : "secondary"}
+          onClick={() => setUseAgent(!useAgent)}
+          tooltip="智能代理模式：更强的推理和工具使用能力"
+          className={cn(
+            "h-8 px-3 text-xs font-medium rounded-xl",
+            "shrink-0",
+            useAgent 
+              ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
+              : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
+          )}
+        >
+          <Brain className={cn(
+            "w-3 h-3 mr-1.5 transition-all duration-300",
+            useAgent && "animate-pulse"
+          )} />
+          Agent
+        </TooltipButton>
+        
+        <TooltipButton
+          variant={enableSearch ? "default" : "secondary"}
+          onClick={() => setEnableSearch(!enableSearch)}
+          tooltip="启用网络搜索功能"
+          className={cn(
+            "h-8 px-3 text-xs font-medium rounded-xl",
+            "shrink-0",
+            enableSearch 
+              ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
+              : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
+          )}
+        >
+          <Search className="w-3 h-3 mr-1.5" />
+          搜索
+        </TooltipButton>
+        
+        <TooltipButton
+          variant={enableMcp ? "default" : "secondary"}
+          onClick={() => setEnableMcp(!enableMcp)}
+          tooltip="MCP工具集成"
+          className={cn(
+            "h-8 px-3 text-xs font-medium rounded-xl",
+            "shrink-0",
+            enableMcp 
+              ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
+              : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
+          )}
+        >
+          <Wrench className="w-3 h-3 mr-1.5" />
+          MCP
+        </TooltipButton>
+      </div>
+      
+      {/* 分隔线 */}
+      <Separator.Root className="w-px h-6 bg-border/50 mx-2" />
+      
+      {/* Agent 专用功能 - 确保容器不会裁切动画 */}
+      <AnimatePresence mode="wait">
+        {useAgent ? (
+          <motion.div
+            key="agent-features"
+            initial={{ opacity: 0, width: 0 }}
+            animate={{ opacity: 1, width: "auto" }}
+            exit={{ opacity: 0, width: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="flex items-center gap-2 overflow-visible py-1"
+          >
+            <TooltipButton
+              variant={enableMemory ? "default" : "secondary"}
+              onClick={() => setEnableMemory(!enableMemory)}
+              tooltip="启用上下文记忆"
+              className={cn(
+                "h-8 px-3 text-xs font-medium rounded-xl",
+                "shrink-0 whitespace-nowrap",
+                enableMemory 
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
+                  : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
+              )}
+            >
+              <BookOpen className="w-3 h-3 mr-1.5" />
+              记忆
+            </TooltipButton>
+            
+            <TooltipButton
+              variant={enableReflection ? "default" : "secondary"}
+              onClick={() => setEnableReflection(!enableReflection)}
+              tooltip="启用自我反思模式"
+              className={cn(
+                "h-8 px-3 text-xs font-medium rounded-xl",
+                "shrink-0 whitespace-nowrap",
+                enableReflection 
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
+                  : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
+              )}
+            >
+              <AlertCircle className="w-3 h-3 mr-1.5" />
+              反思
+            </TooltipButton>
+            
+            <TooltipButton
+              variant={enableReactMode ? "default" : "secondary"}
+              onClick={() => setEnableReactMode(!enableReactMode)}
+              tooltip="推理-行动循环模式"
+              className={cn(
+                "h-8 px-3 text-xs font-medium rounded-xl",
+                "shrink-0 whitespace-nowrap",
+                enableReactMode 
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
+                  : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
+              )}
+            >
+              <Zap className="w-3 h-3 mr-1.5" />
+              ReAct
+            </TooltipButton>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="chat-features"
+            initial={{ opacity: 0, width: 0 }}
+            animate={{ opacity: 1, width: "auto" }}
+            exit={{ opacity: 0, width: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="flex items-center gap-2 overflow-visible py-1"
+          >
+            <TooltipButton
+              variant={disableHistory ? "default" : "secondary"}
+              onClick={() => setDisableHistory(!disableHistory)}
+              tooltip="禁用对话历史记录"
+              className={cn(
+                "h-8 px-3 text-xs font-medium rounded-xl",
+                "shrink-0 whitespace-nowrap",
+                disableHistory 
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
+                  : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
+              )}
+            >
+              <BookOpen className="w-3 h-3 mr-1.5" />
+              禁用历史
+            </TooltipButton>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+    
+    <div className="shrink-0 ml-3">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="
+              h-8 px-3 text-xs font-medium rounded-xl 
+              bg-secondary/80 text-secondary-foreground 
+              hover:bg-secondary/90 hover:scale-[1.02]
+              active:scale-[0.98] transition-all duration-200
+              group shrink-0
+            "
+          >
+            <Settings className="w-3 h-3 mr-1.5 transition-transform duration-200 group-hover:rotate-90" />
+            设置
+            <ChevronDown className="w-3 h-3 ml-1.5 transition-transform duration-200 group-data-[state=open]:rotate-180" />
+          </Button>
+        </DropdownMenuTrigger>
+        
+        <DropdownMenuContent 
+          align="end"
+          side="top"
+          className="
+            w-48 p-2
+            bg-background/95 backdrop-blur-xl
+            border border-border/50 
+            rounded-xl shadow-xl
+            animate-in slide-in-from-bottom-2 fade-in-0 duration-300
+          "
+        >
+          <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground border-b border-border/30 mb-2">
+            显示设置
+          </div>
+          
+          <div className="space-y-1">
+            <SettingsMenuItem
+              icon={Minimize2}
+              label="紧凑模式"
+              isActive={compactMode}
+              onClick={() => setCompactMode(!compactMode)}
+            />
+            <SettingsMenuItem
+              icon={Clock}
+              label="显示时间戳"
+              isActive={showTimestamps}
+              onClick={() => setShowTimestamps(!showTimestamps)}
+            />
+            <SettingsMenuItem
+              icon={Bot}
+              label="模型信息"
+              isActive={showModelInfo}
+              onClick={() => setShowModelInfo(!showModelInfo)}
+            />
+            <SettingsMenuItem
+              icon={Eye}
+              label="性能指标"
+              isActive={showPerformanceMetrics}
+              onClick={() => setShowPerformanceMetrics(!showPerformanceMetrics)}
+            />
+          </div>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  </div>
+</div>
+      </div>
+    </motion.div>
+    
+    {/* 状态栏 - 减少高度和内边距 */}
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.4, duration: 0.4 }}
+      className="flex items-center justify-center mt-3"
+    >
+      <div className="flex items-center gap-3 flex-wrap justify-center bg-gradient-to-r from-muted/30 via-muted/20 to-muted/30 px-4 py-2 rounded-xl border border-border/30 backdrop-blur-lg shadow-lg">
+        {/* 模式指示 */}
+        <div className="flex items-center gap-2">
+          <motion.div
+            animate={{
+              scale: [1, 1.2, 1],
+              backgroundColor: useAgent 
+                ? ["hsl(var(--primary))", "hsl(var(--primary))", "hsl(var(--primary))"]
+                : ["hsl(214 100% 50%)", "hsl(214 100% 60%)", "hsl(214 100% 50%)"]
+            }}
+            transition={{ duration: 2, repeat: Infinity }}
+            className="w-1.5 h-1.5 rounded-full"
+          />
+          {useAgent ? (
+            <Brain className="w-3 h-3 text-primary" />
+          ) : (
+            <Bot className="w-3 h-3 text-blue-500" />
+          )}
+          <span className="font-semibold text-xs">
+            {useAgent ? 'Agent模式' : 'Chat模式'}
+          </span>
+        </div>
+        
+        <Separator.Root className="w-px h-3 bg-border/50" />
+        
+        {/* 模型信息 */}
+        <span className="font-mono text-xs bg-background/50 px-2 py-0.5 rounded-md">
+          {selectedModel}
+        </span>
+        
+        <Separator.Root className="w-px h-3 bg-border/50" />
+        
+        {/* 连接状态 */}
+        <div className="flex items-center gap-1.5">
+          <motion.div
+            animate={{
+              scale: [1, 1.3, 1],
+              backgroundColor: 
+                apiStatus === 'connected' ? ["hsl(142 100% 50%)", "hsl(142 100% 60%)", "hsl(142 100% 50%)"] :
+                apiStatus === 'disconnected' ? ["hsl(0 100% 50%)", "hsl(0 100% 60%)", "hsl(0 100% 50%)"] :
+                ["hsl(45 100% 50%)", "hsl(45 100% 60%)", "hsl(45 100% 50%)"]
+            }}
+            transition={{ duration: 1.5, repeat: Infinity }}
+            className="w-1.5 h-1.5 rounded-full"
+          />
+          <span className="font-mono text-xs opacity-75">
+            {API_BASE_URL.replace('http://', '')}
+          </span>
+        </div>
+        
+        {/* 功能状态 */}
+        <AnimatePresence>
+          {(enableSearch || enableMcp || enableMemory || enableReflection || enableReactMode) && (
+            <motion.div
+              initial={{ opacity: 0, width: 0 }}
+              animate={{ opacity: 1, width: "auto" }}
+              exit={{ opacity: 0, width: 0 }}
+              transition={{ duration: 0.3 }}
+              className="flex items-center gap-2"
+            >
+              <Separator.Root className="w-px h-3 bg-border/50" />
+              <div className="flex items-center gap-1.5">
+                {enableSearch && <Search className="w-3 h-3 text-blue-500" />}
+                {enableMcp && <Wrench className="w-3 h-3 text-orange-500" />}
+                {useAgent && enableMemory && <Brain className="w-3 h-3 text-green-500" />}
+                {useAgent && enableReflection && <AlertCircle className="w-3 h-3 text-purple-500" />}
+                {useAgent && enableReactMode && <Zap className="w-3 h-3 text-blue-500" />}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        
+        {/* 加载状态 */}
+        <AnimatePresence>
+          {isLoading && (
+            <motion.div
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -10 }}
+              transition={{ duration: 0.2 }}
+              className="flex items-center gap-1.5"
+            >
+              <Separator.Root className="w-px h-3 bg-border/50" />
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                className="w-2.5 h-2.5 border-2 border-blue-500 border-t-transparent rounded-full"
+              />
+              <span className="font-medium text-xs text-blue-500">
+                {useAgent ? 'Agent处理中...' : '处理中...'}
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  </div>
+</div>
+
       </div>
     </div>
   )
@@ -3049,223 +3685,243 @@ const MessageErrorBoundary = ({ children, messageId }: { children: React.ReactNo
   }
 }
 
-// 圖片組件 - 重新設計，簡化邏輯，專注MongoDB圖片URL處理
-const ImageComponent = (props: React.ImgHTMLAttributes<HTMLImageElement>): React.ReactElement | null => {
-  const [currentSrc, setCurrentSrc] = useState<string>(typeof props.src === 'string' ? props.src : '');
-  const [imageSrc, setImageSrc] = useState<string>('');
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string>('');
-  const blobUrlRef = useRef<string | null>(null);
-  const staticImageCache = useRef<Record<string, string>>({});
+// 全局圖片緩存
+const globalImageCache = new Map<string, string>();
+const pendingImageProcesses = new Set<string>();
+
+// 預處理圖片URL以獲取標準化的URL
+const preprocessImageUrl = (src: string): string | null => {
+  if (!src || src.trim() === '' || src === '#' || src === 'undefined' || src === 'null') {
+    return null;
+  }
   
+  // 檢查是否是attachment相關的佔位符（無效的圖片引用）
+  if (src === 'attachment_url' || src === 'attachment' || 
+      (src.includes('attachment') && !src.startsWith('data:') && !src.startsWith('http') && !src.startsWith('/api/'))) {
+    return null;
+  }
+  
+  // 檢查是否是URL編碼的文本（不是圖片）
+  if (src.includes('%') && !src.startsWith('data:') && !src.startsWith('/api/') && !src.startsWith('http')) {
+    try {
+      const decoded = decodeURIComponent(src);
+      if (/[\u4e00-\u9fff]/.test(decoded) || /^[a-zA-Z\s]+$/.test(decoded)) {
+        return null;
+      }
+    } catch (e) {
+      return null;
+    }
+  }
+  
+  // 檢查是否包含明顯的非圖片內容（中文、英文文本等）
+  const textPatterns = [
+    /[\u4e00-\u9fff]/, // 中文字符
+    /^[a-zA-Z\s]+$/, // 純英文文本
+    /在回复中展示/, // 特定文本模式
+  ];
+  
+  for (const pattern of textPatterns) {
+    if (pattern.test(src)) {
+      return null;
+    }
+  }
+  
+  return src;
+};
+
+// 處理圖片URL並返回可用的URL
+const processImageUrl = (src: string): string => {
+  let processedSrc = src;
+  
+  // 如果已經包含代理前綴，直接使用
+  if (processedSrc.startsWith('/api/backend/') || processedSrc.includes('/api/backend/')) {
+    return processedSrc;
+  }
+  
+  // 兼容舊格式：處理 /api/v1/images/ 格式的URL
+  if (processedSrc.startsWith('/api/v1/images/') || processedSrc.includes('/api/v1/images/')) {
+    processedSrc = processedSrc.replace('/api/v1/images/', '/images/');
+    if (processedSrc.startsWith('/')) {
+      processedSrc = `${API_BASE_URL}${processedSrc}`;
+    }
+    return processedSrc;
+  }
+  
+  // 處理MongoDB API圖片URL
+  if (processedSrc.startsWith('/images/') || processedSrc.includes('/images/')) {
+    if (processedSrc.startsWith('/')) {
+      processedSrc = `${API_BASE_URL}${processedSrc}`;
+    }
+    return processedSrc;
+  }
+  
+  // 處理完整的data URI
+  if (processedSrc.startsWith('data:image/')) {
+    return processedSrc;
+  }
+  
+  // 處理純base64字符串
+  if (processedSrc.match(/^[A-Za-z0-9+/]+=*$/) && processedSrc.length > 50) {
+    return `data:image/jpeg;base64,${processedSrc}`;
+  }
+  
+  // 處理其他路徑
+  if (processedSrc.startsWith('/')) {
+    return `${window.location.origin}${processedSrc}`;
+  }
+  
+  return processedSrc;
+};
+
+// 優化的圖片組件 - 使用記憶化和懶加載防止頁面滾動時的閃爍
+const ImageComponent = React.memo((props: React.ImgHTMLAttributes<HTMLImageElement>): React.ReactElement | null => {
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string>('');
+  const imgRef = useRef<HTMLImageElement>(null);
+  const imageWrapperRef = useRef<HTMLDivElement>(null);
   const alt = props.alt || '生成的圖片';
   
-  // 当props.src变化时更新currentSrc
-  useEffect(() => {
-    if (typeof props.src === 'string' && props.src !== currentSrc) {
-      setCurrentSrc(props.src);
+  // 檢查並預處理圖片URL
+  const src = typeof props.src === 'string' ? props.src : '';
+  const validSrc = useMemo(() => preprocessImageUrl(src), [src]);
+  
+  // 使用記憶化的URL處理結果
+  const imageSrc = useMemo(() => {
+    if (!validSrc) return '';
+    
+    // 檢查全局緩存
+    if (globalImageCache.has(validSrc)) {
+      return globalImageCache.get(validSrc)!;
+    }
+    
+    // 處理並緩存圖片URL
+    if (!pendingImageProcesses.has(validSrc)) {
+      pendingImageProcesses.add(validSrc);
       
-      // 清理之前的blob URL
-      if (blobUrlRef.current) {
-        try {
-          URL.revokeObjectURL(blobUrlRef.current);
-          console.log('🧹 Revoked previous blob URL due to src change');
-          blobUrlRef.current = null;
-        } catch (e) {
-          console.error('❌ Failed to revoke previous blob URL:', e);
-        }
-      }
-    }  }, [props.src, currentSrc]);  // 图片处理逻辑
-  useEffect(() => {
-    // 檢查src是否為空或無效
-    if (!currentSrc || currentSrc.trim() === '' || currentSrc === '#' || currentSrc === 'undefined' || currentSrc === 'null') {
-      console.warn('Empty or invalid image src detected, skipping processing:', currentSrc);
-      setIsLoading(false);
-      return;
-    }
-    
-    // 检查是否是attachment相关的占位符（无效的图片引用）
-    if (currentSrc === 'attachment_url' || currentSrc === 'attachment' || 
-        (currentSrc.includes('attachment') && !currentSrc.startsWith('data:') && !currentSrc.startsWith('http') && !currentSrc.startsWith('/api/'))) {
-      console.warn('Invalid attachment placeholder detected, skipping:', currentSrc);
-      setIsLoading(false);
-      return;
-    }
-    
-    // 检查是否是URL编码的文本（不是图片）
-    if (currentSrc.includes('%') && !currentSrc.startsWith('data:') && !currentSrc.startsWith('/api/') && !currentSrc.startsWith('http')) {
       try {
-        const decoded = decodeURIComponent(currentSrc);
-        console.warn('Detected URL encoded text (not image), skipping:', decoded);
-        setIsLoading(false);
-        return;
-      } catch (e) {
-        console.warn('Failed to decode URL encoded string:', currentSrc);
-        setIsLoading(false);
-        return;
-      }
-    }
-    
-    // 检查是否包含明显的非图片内容（中文、英文文本等）
-    const textPatterns = [
-      /[\u4e00-\u9fff]/, // 中文字符
-      /^[a-zA-Z\s]+$/, // 纯英文文本
-      /在回复中展示/, // 特定文本模式
-    ];
-    
-    for (const pattern of textPatterns) {
-      if (pattern.test(currentSrc)) {
-        console.warn('Detected text content (not image), skipping:', currentSrc.substring(0, 50));
-        setIsLoading(false);
-        return;
-      }
-    }
-    // 检查缓存
-    if (staticImageCache.current[currentSrc]) {
-      console.log('📋 Using cached processed image URL');
-      setImageSrc(staticImageCache.current[currentSrc]);
-      setIsLoading(false);
-      return;
-    }
-    
-    const processImageAsync = async () => {
-      try {
-        setIsLoading(true);
-        setError('');
-        
-        let processedSrc = currentSrc;        // 1. 处理MongoDB API图片URL (优先级最高)
-        if (processedSrc.startsWith('/api/v1/images/') || processedSrc.includes('/api/v1/images/')) {
-          console.log('🔗 Processing MongoDB image URL:', processedSrc.substring(0, 50));
-          if (processedSrc.startsWith('/')) {
-            // 只有相对路径才需要转换
-            processedSrc = `${API_BASE_URL}${processedSrc}`;
-          }
-          // 如果已经是完整URL，直接使用
-          staticImageCache.current[currentSrc] = processedSrc;
-          setImageSrc(processedSrc);
-          setIsLoading(false);
-          return;
-        }
-        
-        // 2. 处理完整的data URI
-        if (processedSrc.startsWith('data:image/')) {
-          console.log('📷 Processing data URI image');
-          staticImageCache.current[currentSrc] = processedSrc;
-          setImageSrc(processedSrc);
-          setIsLoading(false);
-          return;
-        }
-        
-        // 3. 处理纯base64字符串
-        if (processedSrc.match(/^[A-Za-z0-9+/]+=*$/) && processedSrc.length > 50) {
-          console.log('🔄 Converting base64 to data URI');
-          processedSrc = `data:image/jpeg;base64,${processedSrc}`;
-          staticImageCache.current[currentSrc] = processedSrc;
-          setImageSrc(processedSrc);
-          setIsLoading(false);
-          return;
-        }
-        
-        // 4. 处理其他路径
-        if (processedSrc.startsWith('/')) {
-          processedSrc = `${window.location.origin}${processedSrc}`;
-          staticImageCache.current[currentSrc] = processedSrc;
-          setImageSrc(processedSrc);
-          setIsLoading(false);
-          return;
-        }
-        
-        // 5. 无效格式
-        console.warn('⚠️ Unsupported image format:', processedSrc.substring(0, 50));
-        setError('不支持的圖片格式');
-        setIsLoading(false);
-        
+        const processed = processImageUrl(validSrc);
+        globalImageCache.set(validSrc, processed);
+        pendingImageProcesses.delete(validSrc);
+        return processed;
       } catch (err) {
-        console.error('❌ Error processing image:', err);
-        setError('圖片處理失敗');
-        setIsLoading(false);
+        pendingImageProcesses.delete(validSrc);
+        console.error('❌ Error processing image URL:', err);
+        return '';
       }
-    };
+    }
     
-    processImageAsync();
+    return '';
+  }, [validSrc]);
+  
+  // 使用 Intersection Observer 實現懶加載
+  useEffect(() => {
+    if (!imageWrapperRef.current || !validSrc || !imageSrc) return;
     
-    // 清理函数
+    // 創建 Intersection Observer 以檢測圖片何時進入視口
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting && imgRef.current) {
+            // 圖片進入視口，設置 src 開始加載
+            imgRef.current.src = imageSrc;
+            // 停止觀察
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      {
+        root: document.querySelector('[data-scroll-container="true"]'),
+        rootMargin: '300px 0px', // 提前 300px 加載圖片
+        threshold: 0.01
+      }
+    );
+    
+    // 開始觀察
+    observer.observe(imageWrapperRef.current);
+    
+    // 清理函數
     return () => {
-      if (blobUrlRef.current) {
-        try {
-          URL.revokeObjectURL(blobUrlRef.current);
-          console.log('🧹 Blob URL revoked on cleanup');
-          blobUrlRef.current = null;
-        } catch (e) {
-          console.error('❌ Failed to revoke blob URL:', e);
-        }
+      if (imageWrapperRef.current) {
+        observer.unobserve(imageWrapperRef.current);
       }
-    };  }, [currentSrc]);  // 早期返回检查（必须在所有hooks之后）
-  if (!currentSrc || currentSrc.trim() === '' || currentSrc === '#' || currentSrc === 'undefined' || currentSrc === 'null') {
-    console.warn('Empty or invalid image src detected, skipping render:', currentSrc);
+      observer.disconnect();
+    };
+  }, [imageSrc, validSrc]);
+  
+  // 如果URL無效，則不渲染任何內容
+  if (!validSrc || !imageSrc) {
     return null;
   }
   
-  // 检查是否是attachment相关的占位符（无效的图片引用）
-  if (currentSrc === 'attachment_url' || currentSrc === 'attachment' || 
-      (currentSrc.includes('attachment') && !currentSrc.startsWith('data:') && !currentSrc.startsWith('http') && !currentSrc.startsWith('/api/'))) {
-    console.warn('Invalid attachment placeholder detected, skipping render:', currentSrc);
-    return null;
-  }
-  
-  // 检查是否是URL编码的文本或纯文本（不是图片）
-  if (currentSrc.includes('%') && !currentSrc.startsWith('data:') && !currentSrc.startsWith('/api/') && !currentSrc.startsWith('http')) {
-    console.warn('URL encoded text detected, skipping render:', currentSrc);
-    return null;
-  }
-  
-  // 检查是否包含中文或明显的文本内容
-  if (/[\u4e00-\u9fff]/.test(currentSrc) || /^[a-zA-Z\s]+$/.test(currentSrc)) {
-    console.warn('Text content detected, skipping render:', currentSrc.substring(0, 50));
-    return null;
-  }
-  
-  // 渲染状态
-  if (isLoading) {
-    return (
-      <span className="inline-block">
-        <span className="bg-muted px-3 py-2 rounded-lg border text-center inline-flex items-center gap-2">
-          <span className="w-4 h-4 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin"></span>
-          <span className="text-sm text-muted-foreground">正在加載圖片...</span>
-        </span>
-      </span>
-    )
-  }
-  
+  // 渲染錯誤狀態
   if (error) {
     return (
-      <span className="inline-block">
-        <span className="bg-muted px-3 py-2 rounded-lg border border-destructive/20 text-center">
+      <div className="inline-block image-container">
+        <div className="bg-muted px-3 py-2 rounded-lg border border-destructive/20 text-center image-error">
           <span className="text-destructive text-sm">🖼️ {error}</span>
-          <br />
-          <span className="text-muted-foreground text-xs">
-            原始數據: {currentSrc.substring(0, 30)}...
-          </span>
-        </span>
-      </span>
-    )
+        </div>
+      </div>
+    );
   }
   
   return (
-    <img 
-      src={imageSrc} 
-      alt={alt} 
-      className="max-w-full h-auto rounded-lg shadow-sm border" 
-      loading="lazy"
-      onError={(e) => {
-        const target = e.target as HTMLImageElement;
-        console.error('❌ Image failed to load:', target.src.substring(0, 100));
-        setError(`圖片加載失敗: ${target.src.startsWith('blob:') ? 'Blob URL錯誤' : '載入失敗'}`);
+    <div 
+      ref={imageWrapperRef}
+      className="inline-block max-w-full overflow-hidden relative"
+      style={{
+        minHeight: loaded ? 'auto' : '200px',
+        minWidth: loaded ? 'auto' : '200px',
       }}
-      onLoad={() => {
-        console.log('✅ Image loaded successfully:', imageSrc.substring(0, 50));
-      }}
-      style={{ maxHeight: '80vh' }}
-    />
-  )
-}
+    >
+      {!loaded && (
+        <div className="absolute inset-0 flex items-center justify-center bg-muted/30 rounded-lg">
+          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+        </div>
+      )}
+      <img 
+        ref={imgRef}
+        alt={alt}
+        className={cn(
+          "max-w-full h-auto rounded-lg shadow-sm border transition-opacity duration-300",
+          loaded ? "opacity-100" : "opacity-0"
+        )}
+        loading="lazy"
+        onError={(e) => {
+          console.error('❌ Image failed to load:', (e.target as HTMLImageElement).src.substring(0, 50));
+          setError('圖片載入失敗');
+        }}
+        onLoad={() => {
+          setLoaded(true);
+          
+          // 圖片載入完成後，如果用戶在底部則保持在底部
+          setTimeout(() => {
+            const scrollElement = document.querySelector('[data-scroll-container="true"]') as HTMLElement;
+            if (scrollElement) {
+              const { scrollTop, scrollHeight, clientHeight } = scrollElement;
+              const isNearBottom = scrollHeight - scrollTop - clientHeight < 200; // 增加容差範圍
+              
+              if (isNearBottom) {
+                // 使用 scrollTop 直接設定位置，避免動畫導致的閃爍
+                scrollElement.scrollTop = scrollElement.scrollHeight;
+              }
+            }
+          }, 50) // 較短的延遲以減少閃爍
+        }}
+        style={{ 
+          maxHeight: '80vh',
+          // 使用 CSS 屬性優化圖片顯示
+          willChange: 'transform',
+          transform: 'translateZ(0)', // 使用 GPU 加速
+          backfaceVisibility: 'hidden',
+          // 防止圖片載入時的閃爍
+          imageRendering: 'auto'
+        }}
+        // data-placeholder 屬性用於保存原始URL，方便調試
+        data-placeholder={src}
+      />
+    </div>
+  );
+}, (prevProps, nextProps) => {
+  // 比較函數，僅當 src 發生變化時才重新渲染
+  return prevProps.src === nextProps.src;
+});

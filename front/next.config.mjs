@@ -8,6 +8,23 @@ const nextConfig = {
     // Enable optimized package loading for faster builds
     optimizePackageImports: ['lucide-react', '@radix-ui/react-icons'],
   },
+  // Add API rewrites to proxy backend requests
+  async rewrites() {
+    return [
+      {
+        source: '/api/backend/:path*',
+        destination: `${process.env.API_BASE_URL || 'http://localhost:8000'}/api/v1/:path*`,
+      },
+      {
+        source: '/api/agent/:path*',
+        destination: `${process.env.API_BASE_URL || 'http://localhost:8000'}/api/v1/agent/:path*`,
+      },
+      {
+        source: '/api/health',
+        destination: `${process.env.API_BASE_URL || 'http://localhost:8000'}/health`,
+      },
+    ]
+  },
   // Allow cross-origin requests from local network IPs during development
   async headers() {
     return [

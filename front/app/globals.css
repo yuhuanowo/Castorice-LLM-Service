@@ -140,3 +140,82 @@
     @apply bg-background text-foreground;
   }
 }
+/* 添加到全局CSS文件中 */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  overflow: hidden; /* 防止滚动 */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* 自定义阴影 */
+.shadow-3xl {
+  box-shadow: 0 35px 60px -12px rgba(0, 0, 0, 0.25);
+}
+
+/* 渐变动画 */
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.animate-gradient {
+  background-size: 200% 200%;
+  animation: gradient-shift 3s ease infinite;
+}
+/* 确保按钮容器适配 */
+.flex-1 {
+  min-width: 0; /* 防止 flex 子元素溢出 */
+}
+
+/* 減少滾動閃爍的優化 */
+.scroll-smooth {
+  scroll-behavior: smooth;
+}
+
+/* 圖片容器優化，防止載入時的布局偏移 */
+.image-container {
+  contain: layout style paint;
+  overflow: hidden;
+}
+
+/* 優化圖片載入，減少布局偏移 */
+img[loading="lazy"] {
+  contain: intrinsic-size;
+  aspect-ratio: attr(width) / attr(height);
+}
+
+/* 防止滾動容器中的內容跳動 */
+.messages-container {
+  contain: layout style paint;
+  transform: translateZ(0); /* 啟用硬體加速 */
+}
+
+/* 滾動容器優化 */
+.scroll-container {
+  will-change: scroll-position;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: auto; /* 避免過度的平滑滾動導致的閃爍 */
+}
+
+/* 減少重繪次數 */
+.message-item {
+  contain: layout style paint;
+  transform: translateZ(0);
+}
+
+/* 圖片載入狀態的平滑過渡 */
+.image-loading {
+  transition: opacity 0.2s ease-in-out;
+}
+
+.image-loaded {
+  opacity: 1;
+}
+
+.image-error {
+  opacity: 0.7;
+}

@@ -46,9 +46,47 @@ npm run dev
 
 ## 与后端 API 集成
 
-本前端应用设计为与 FastAPI 后端 API 集成。它通过 `/api/chat` 端点与后端通信，该端点代理请求到 FastAPI 服务器的 `/chat/completions` 端点。
+本前端应用设计为与 FastAPI 后端 API 集成。它使用 Next.js 的 API 代理功能，通过以下路径访问后端：
 
-确保后端 API 服务器正在运行，并且 `API_BASE_URL` 环境变量正确指向后端服务器地址。
+- `/api/backend/*` - 代理到后端的 `/api/v1/*` 端点
+- `/api/agent/*` - 代理到后端的 `/api/v1/agent/*` 端点  
+- `/api/health` - 代理到后端的 `/health` 端点
+
+### 配置说明
+
+#### 开发环境
+在 `.env.local` 文件中配置：
+```
+API_BASE_URL=http://localhost:8000
+```
+
+#### 生产环境配置
+
+**方案1：同服务器部署**
+如果前端和后端部署在同一台服务器上：
+```
+API_BASE_URL=
+```
+
+**方案2：不同服务器部署**
+如果前端和后端分别部署：
+```
+API_BASE_URL=http://your-backend-server:8000
+```
+
+**方案3：使用域名**
+```
+API_BASE_URL=https://your-backend-domain.com
+```
+
+### 代理的优势
+
+1. **跨域问题解决** - 前端和后端使用相同域名，避免CORS问题
+2. **网络访问优化** - 其他设备访问前端时，后端API通过前端服务器代理
+3. **安全性提升** - 隐藏后端服务器的直接地址
+4. **部署灵活性** - 可以轻松更改后端地址而无需重新构建前端
+
+确保后端 API 服务器正在运行，并且 `API_BASE_URL` 环境变量正确配置。
 
 ## 构建生产版本
 
