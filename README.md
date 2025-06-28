@@ -17,6 +17,7 @@
 </div>
 
 ---
+<img src="https://raw.githubusercontent.com/yuhuanowo/Castorice-LLM-Service/main/screencut.png" alt="Castorice Logo" width="200"></i>
 
 ## ✨ 為什麼選擇 Castorice？
 

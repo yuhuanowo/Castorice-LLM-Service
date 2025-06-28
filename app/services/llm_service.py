@@ -31,6 +31,7 @@ class ModelProvider(Enum):
     GEMINI = "gemini"
     OLLAMA = "ollama"
     NVIDIA_NIM = "nvidia_nim"
+    OPENROUTER = "openrouter"
 
 
 class LLMService:
@@ -66,6 +67,11 @@ class LLMService:
         self.nvidia_nim_endpoint = settings.NVIDIA_NIM_ENDPOINT
         self.nvidia_nim_api_key = settings.NVIDIA_NIM_API_KEY
         self.nvidia_nim_default_model = settings.NVIDIA_NIM_DEFAULT_MODEL
+        
+        # OpenRouter API设置
+        self.openrouter_endpoint = settings.OPENROUTER_ENDPOINT
+        self.openrouter_api_key = settings.OPENROUTER_API_KEY
+        self.openrouter_default_model = settings.OPENROUTER_DEFAULT_MODEL
         
         # 存储最近生成的图片
         self.last_generated_image = None
@@ -691,6 +697,8 @@ class LLMService:
             return ModelProvider.OLLAMA
         elif model_name in settings.ALLOWED_NVIDIA_NIM_MODELS:
             return ModelProvider.NVIDIA_NIM
+        elif model_name in settings.ALLOWED_OPENROUTER_MODELS:
+            return ModelProvider.OPENROUTER
         else:  # 默认为GitHub模型
             return ModelProvider.GITHUB
 
@@ -811,6 +819,8 @@ class LLMService:
             return await self._send_ollama_request(messages, model_name, tools)
         elif provider == ModelProvider.NVIDIA_NIM:
             return await self._send_nvidia_nim_request(messages, model_name, tools)
+        elif provider == ModelProvider.OPENROUTER:
+            return await self._send_openrouter_request(messages, model_name, tools)
         else:  # 默认使用GitHub模型
             return await self._send_github_request(messages, model_name, tools)
 
@@ -1338,6 +1348,119 @@ class LLMService:
             logger.error(f"NVIDIA NIM请求错误: {str(e)}")
             return {"error": "NVIDIA NIM请求错误", "detail": str(e)}
 
+    # MARK: 发送OpenRouter请求
+    async def _send_openrouter_request(
+        self,
+        messages: List[Dict[str, Any]],
+        model_name: str,
+        tools: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """
+        发送OpenRouter请求 - OpenRouter是一个API聚合服务，提供对多种模型的访问
+        
+        Args:
+            messages: 消息列表
+            model_name: 模型名称
+            tools: 可选的工具定义
+            
+        Returns:
+            API响应结果
+        """
+        try:
+            url = self.openrouter_endpoint or "https://openrouter.ai/api/v1/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.openrouter_api_key}",
+                "HTTP-Referer": settings.OPENROUTER_APP_URL,  # OpenRouter建议提供referer
+                "X-Title": settings.OPENROUTER_APP_TITLE   # 应用名称
+            }
+            
+            # 构建请求体
+            body = {
+                "model": model_name,
+                "messages": messages,
+                "stream": False  # 使用非流式响应
+            }
+            
+            # 添加可选参数
+            if tools and model_name not in [m.lower() for m in settings.UNSUPPORTED_TOOL_MODELS]:
+                body["tools"] = tools
+                body["tool_choice"] = "auto"  # 让模型自动决定是否使用工具
+            
+            # 发送请求到OpenRouter
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=body,
+                    timeout=300.0  # 增加超时时间，与其他API保持一致
+                )
+                
+                # 处理错误响应
+                if response.status_code != 200:
+                    logger.error(f"OpenRouter API错误 {response.status_code}: {response.text}")
+                    return {"error": f"OpenRouter API错误 {response.status_code}", "detail": response.text}
+                
+                # 解析响应
+                openrouter_response = response.json()
+                
+                # 添加调试日志以了解OpenRouter响应格式
+                logger.info(f"OpenRouter原始响应结构: {json.dumps(openrouter_response, indent=2, ensure_ascii=False)[:500]}...")
+                
+                # 验证并标准化OpenRouter响应格式
+                # 虽然OpenRouter声称返回OpenAI兼容格式，但我们需要确保格式完整性
+                if "choices" not in openrouter_response or not openrouter_response["choices"]:
+                    logger.error("OpenRouter响应格式错误：缺少choices字段")
+                    return {"error": "OpenRouter响应格式错误", "detail": "响应中缺少choices字段"}
+                
+                # 确保响应包含必要字段
+                standardized_response = {
+                    "choices": openrouter_response.get("choices", []),
+                    "model": openrouter_response.get("model", model_name),
+                    "id": openrouter_response.get("id", f"openrouter-{datetime.now().strftime('%Y%m%d%H%M%S')}"),
+                    "created": openrouter_response.get("created", int(datetime.now().timestamp())),
+                    "usage": openrouter_response.get("usage", {
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0
+                    })
+                }
+                
+                # 验证choices结构并处理特殊的推理模型响应
+                for i, choice in enumerate(standardized_response["choices"]):
+                    if "message" not in choice:
+                        choice["message"] = {"role": "assistant", "content": ""}
+                    if "finish_reason" not in choice:
+                        choice["finish_reason"] = "stop"
+                    if "index" not in choice:
+                        choice["index"] = i
+                    
+                    # 检查推理类模型的特殊字段
+                    message = choice.get("message", {})
+                    
+                    # 如果content为空但存在reasoning字段，使用reasoning内容
+                    if not message.get("content") and message.get("reasoning"):
+                        logger.info("检测到推理模型响应，使用reasoning字段作为内容")
+                        choice["message"]["content"] = message["reasoning"]
+                    
+                    # 如果content仍为空，检查是否有refusal字段
+                    elif not message.get("content") and message.get("refusal"):
+                        logger.info("检测到模型拒绝响应，使用refusal字段")
+                        choice["message"]["content"] = f"抱歉，我无法回答这个问题：{message['refusal']}"
+                
+                logger.info(f"OpenRouter请求成功，模型: {model_name}, 响应长度: {len(standardized_response.get('choices', [{}])[0].get('message', {}).get('content', ''))}")
+                return standardized_response
+                
+        except httpx.ConnectError as e:
+            logger.error(f"无法连接到OpenRouter服务器 {url}: {str(e)}")
+            return {"error": "连接OpenRouter服务器失败", "detail": f"请检查网络连接和API端点 {url}"}
+        except httpx.TimeoutException as e:
+            logger.error(f"OpenRouter请求超时: {str(e)}")
+            return {"error": "OpenRouter请求超时", "detail": "请求处理时间过长，请稍后重试"}
+        except Exception as e:
+            logger.error(f"OpenRouter请求错误: {str(e)}")
+            return {"error": "OpenRouter请求错误", "detail": str(e)}
+        
     # MARK: 处理工具调用
     async def handle_tool_call(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """

@@ -696,7 +696,30 @@ class AgentService:
                 user_prompt = message["content"]
                 break
                 
-        final_reply = final_response["choices"][0]["message"].get("content", "") if "choices" in final_response and final_response["choices"] else ""
+        # 提取最终回复，优先使用content，如果为空则尝试reasoning字段
+        final_reply = ""
+        if "choices" in final_response and final_response["choices"]:
+            choice = final_response["choices"][0]
+            message = choice.get("message", {})
+            final_reply = message.get("content", "")
+            
+            # 如果content为空，尝试使用reasoning字段
+            if not final_reply and message.get("reasoning"):
+                final_reply = message["reasoning"]
+                logger.info("使用推理模型的reasoning字段作为最终回复")
+            
+            # 如果仍为空，但有reasoning_steps，使用最后一个思考步骤
+            if not final_reply and reasoning_steps:
+                for step in reversed(reasoning_steps):
+                    if step.get("type") == "thought" and step.get("content"):
+                        final_reply = step["content"]
+                        logger.info("使用推理步骤中的思考内容作为最终回复")
+                        break
+            
+            # 更新响应中的content以确保一致性
+            if final_reply and not message.get("content"):
+                final_response["choices"][0]["message"]["content"] = final_reply
+                logger.info("已更新响应中的content字段")
         
         # 使用现有的create_chat_log函数
         await create_chat_log(user_id, model_name, user_prompt, final_reply, interaction_id)

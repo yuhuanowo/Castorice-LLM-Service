@@ -5,18 +5,19 @@ import React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
-import { Send, Plus, User, Bot, Copy, PanelLeft, ChevronDown, ArrowUp, ArrowDown, Trash2, Code, Clock, Zap, Brain, Eye, Search, Wrench, Image, FileText, Loader, CheckCircle, XCircle, AlertCircle, Settings, BookOpen, MoreHorizontal, Minimize2, X } from 'lucide-react'
+import { Send, Plus, User, Bot, Copy, PanelLeft, ChevronDown, ArrowUp, ArrowDown, Trash2, Code, Clock, Zap, Brain, Eye, Search, Wrench, Image, FileText, Loader, CheckCircle, XCircle, AlertCircle, Settings, BookOpen, MoreHorizontal, Minimize2, X, Star, Shield, Moon, Sun, Download, Upload, HelpCircle, LogOut, Keyboard, Palette, Globe, Monitor } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { Switch } from '@/components/ui/switch'
-import { Label } from '@/components/ui/label'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import * as Separator from '@radix-ui/react-separator'
+import { Sidebar } from '@/components/Sidebar'
+import { MainChatArea } from '@/components/MainChatArea'
+import { FileManager, useFileManager } from '@/components/FileManager'
 
 // API 基礎 URL - 使用相对路径代理到后端
 const API_BASE_URL = '/api/backend'
@@ -67,46 +68,6 @@ interface ChatHistory {
   timestamp: string
 }
 
-// 时间分组工具函数
-const getTimeGroup = (timestamp: string): string => {
-  const now = new Date()
-  const messageDate = new Date(timestamp)
-  const diffInDays = Math.floor((now.getTime() - messageDate.getTime()) / (1000 * 60 * 60 * 24))
-  
-  if (diffInDays === 0) {
-    return '今天'
-  } else if (diffInDays === 1) {
-    return '昨天'
-  } else if (diffInDays <= 7) {
-    return '这周'
-  } else if (diffInDays <= 30) {
-    return '这个月'
-  } else if (diffInDays <= 90) {
-    return '最近三个月'
-  } else {
-    return '更早'
-  }
-}
-
-// 按时间分组聊天历史
-const groupChatsByTime = (chats: ChatHistory[]) => {
-  const groups: { [key: string]: ChatHistory[] } = {}
-  
-  chats.forEach(chat => {
-    const group = getTimeGroup(chat.timestamp)
-    if (!groups[group]) {
-      groups[group] = []
-    }
-    groups[group].push(chat)
-  })
-  
-  // 按优先级排序分组
-  const groupOrder = ['今天', '昨天', '这周', '这个月', '最近三个月', '更早']
-  return groupOrder.filter(group => groups[group]).map(group => ({
-    title: group,
-    chats: groups[group].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-  }))
-}
 const TooltipButton = ({ 
   children, 
   tooltip, 
@@ -297,6 +258,10 @@ const getModelDeveloperIcon = (modelId: string, ownedBy: string) => {
   if (modelId_lower.includes('nvidia') || modelId_lower.includes('nemotron')) {
     return <img src="/icons/models/nvidia.png" alt="NVIDIA" className={className} />
   }
+  // Minimax 模型
+  if (modelId_lower.includes('minimax') || modelId_lower.includes('minimax')) {
+    return <img src="/icons/models/minimax.png" alt="Minimax" className={className} />
+  }
   
   // 默认图标
 }
@@ -316,6 +281,8 @@ const getProviderIcon = (provider: string) => {
     case 'nvidia_nim':
     case 'nvidia':
       return <img src="/icons/providers/nvidia.png" alt="NVIDIA" className={className} />
+    case 'openrouter':
+      return <img src="/icons/providers/openrouter.png" alt="OpenRouter" className={className} />
     default:
   }
 }
@@ -338,7 +305,6 @@ const getProviderDisplayName = (provider: string) => {
       return formatted.length > 15 ? formatted.substring(0, 15) + '...' : formatted
   }
 }
-
 
 
 export default function ModernChatGPT() {
@@ -509,7 +475,7 @@ export default function ModernChatGPT() {
   useEffect(() => {
     // 如果没有任何会话，清空当前会话ID以显示空白状态
     if (chatHistory.length === 0 && currentChatId) {
-      console.log('� No sessions exist, showing empty state')
+      console.log('⚠️ No sessions exist, showing empty state')
       setCurrentChatId('')
       setMessages([])
     }
@@ -1098,8 +1064,8 @@ export default function ModernChatGPT() {
     toast.success('所有對話歷史已清除')
   }  // API configuration
   const API_KEY = 'test_api_key'
-  const REQUEST_TIMEOUT = 30000 // 30 seconds for chat mode
-  const AGENT_REQUEST_TIMEOUT = 120000 // 120 seconds (2 minutes) for agent mode
+  const REQUEST_TIMEOUT = 120000 // 120 seconds (2 minutes) for chat mode
+  const AGENT_REQUEST_TIMEOUT = 240000 // 240 seconds (4 minutes) for agent mode
   // Create abort controller for request cancellation with better state management
   const abortControllerRef = useRef<AbortController | null>(null)
   const isRequestActiveRef = useRef(false)
@@ -1223,7 +1189,7 @@ export default function ModernChatGPT() {
 
   const loadChatSessions = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/sessions/test?limit=20`, {
+      const response = await fetch(`${API_BASE_URL}/sessions/test?limit=100`, {
         headers: {
           'X-API-KEY': API_KEY,
           'accept': 'application/json'
@@ -2163,1490 +2129,216 @@ export default function ModernChatGPT() {
         clearTimeout(updateChatHistoryRef.current)
       }
     }
-  }, [messages.length, currentChatId, isLoadingHistory]) // 添加 isLoadingHistory 依賴
+  }, [messages.length, currentChatId, isLoadingHistory]) // 添加 isLoadingHistory 依賴  // 新增状态管理
+  const [currentPage, setCurrentPage] = useState<'chat' | 'search' | 'files'>('chat')
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [isSearching, setIsSearching] = useState(false)
 
+  // 使用 FileManager hook
+  const { fileStats, fetchFileStats, updateFileStats, setFileStats } = useFileManager(API_BASE_URL, API_KEY)
+  // 导入聊天数据功能
+  const importChatData = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json'
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+      
+      try {
+        const text = await file.text()
+        const importedData = JSON.parse(text)
+        
+        // 验证导入的数据格式
+        if (Array.isArray(importedData) && importedData.every(item => 
+          item.id && item.title && item.messages && item.timestamp
+        )) {
+          setChatHistory(prev => [...importedData, ...prev])
+          toast.success(`成功导入 ${importedData.length} 个对话记录`)
+        } else {
+          toast.error('导入文件格式不正确')
+        }
+      } catch (error) {
+        toast.error('导入失败，请检查文件格式')
+      }
+    }
+    input.click()
+  }
+
+  // 搜索聊天记录功能
+  const searchChatHistory = async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([])
+      return
+    }
+
+    setIsSearching(true)
+    try {
+      const results: any[] = []
+      
+      // 搜索聊天历史
+      chatHistory.forEach(chat => {
+        // 搜索标题
+        if (chat.title.toLowerCase().includes(query.toLowerCase())) {
+          results.push({
+            type: 'chat',
+            id: chat.id,
+            title: chat.title,
+            content: chat.title,
+            timestamp: chat.timestamp,
+            matches: [{ text: chat.title, type: 'title' }]
+          })
+        }
+        
+        // 搜索消息内容
+        chat.messages.forEach(message => {
+          if (message.content.toLowerCase().includes(query.toLowerCase())) {
+            const preview = message.content.length > 100 
+              ? message.content.substring(0, 100) + '...'
+              : message.content
+            
+            results.push({
+              type: 'message',
+              id: `${chat.id}-${message.id}`,
+              title: chat.title,
+              content: preview,
+              role: message.role,
+              timestamp: message.timestamp,
+              chatId: chat.id,
+              matches: [{ text: preview, type: 'content' }]
+            })
+          }
+        })
+      })
+      
+      // 按时间排序
+      results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      
+      setSearchResults(results.slice(0, 20)) // 限制最多20个结果
+    } catch (error) {
+      console.error('搜索失败:', error)
+      toast.error('搜索失败')
+    } finally {
+      setIsSearching(false)
+    }
+  }
+  // 组件挂载时获取文件统计
+  useEffect(() => {
+    if (sidebarOpen) {
+      fetchFileStats()
+    }
+  }, [sidebarOpen])
+
+  // 页面切换时也获取文件统计
+  useEffect(() => {
+    if (currentPage === 'files') {
+      fetchFileStats()
+    }
+  }, [currentPage])
   return (
     <div className="flex h-screen bg-background">
-      {/* Modern Sidebar with Morphic-style design */}
-      <div className={cn(
-        "transition-all duration-300 ease-linear bg-muted/30 border-r border-border flex flex-col",
-        sidebarOpen ? "w-64" : "w-0 overflow-hidden"
-      )}>        
-      {/* Sidebar Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-primary rounded-md flex items-center justify-center">
-              <Bot className="w-4 h-4 text-primary-foreground" />
-            </div>
-            <span className="font-semibold text-sm">AI Assistant</span>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setSidebarOpen(false)}
-            className="h-6 w-6"
-          >
-            <PanelLeft className="w-4 h-4" />
-          </Button>
-        </div>
-
-        {/* API Status Indicator */}
-        <div className="px-4 py-2 border-b border-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className={cn(
-                "w-2 h-2 rounded-full",
-                apiStatus === 'connected' && "bg-green-500",
-                apiStatus === 'disconnected' && "bg-red-500",
-                apiStatus === 'testing' && "bg-yellow-500 animate-pulse"
-              )} />
-              <span className="text-xs text-muted-foreground">
-                {apiStatus === 'connected' && '已連接'}
-                {apiStatus === 'disconnected' && '未連接'}
-                {apiStatus === 'testing' && '測試中...'}
-              </span>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={testConnection}
-              disabled={apiStatus === 'testing'}
-              className="h-6 px-2 text-xs"
-            >
-              測試
-            </Button>
-          </div>
-        </div>
-
-        {/* New Chat Button */}
-        <div className="p-3">
-          <Button
-            onClick={createNewChat}
-            className="w-full justify-start gap-2 bg-background hover:bg-accent text-foreground border border-input rounded-lg h-10 font-normal shadow-sm"
-            variant="outline"
-          >
-            <Plus className="w-4 h-4" />
-            新对话
-          </Button>
-        </div>
-          {/* Chat History */}
-        <div className="flex-1 overflow-y-auto px-3">
-          {groupChatsByTime(chatHistory).map((group) => (
-            <div key={group.title} className="mb-6">
-              <div className="text-xs text-muted-foreground mb-3 px-2 font-medium sticky top-0 bg-background/95 backdrop-blur-sm py-1">
-                {group.title}
-              </div>
-              <div className="space-y-1">
-                {group.chats.map((chat) => (
-                  <div
-                    key={chat.id}
-                    className={cn(
-                      "group relative flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-sm hover:bg-accent",
-                      currentChatId === chat.id && "bg-accent"
-                    )}
-                    onClick={() => loadChat(chat)}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="truncate font-medium text-foreground">{chat.title}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {new Date(chat.timestamp).toLocaleString('zh-TW', {
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </div>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        deleteChat(chat.id)
-                      }}
-                      className="opacity-0 group-hover:opacity-100 h-6 w-6 shrink-0"
-                    >                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>        {/* Settings Panel */}
-        <div className="p-3 border-t border-border">
-          <div className="space-y-4">
-              {/* Action Buttons */}
-            <div className="space-y-2">              
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={clearAllHistory}
-                className="w-full h-8 text-xs justify-start gap-2"
-              >
-                <Trash2 className="w-3 h-3" />
-                清除所有對話
-              </Button>
-              
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setRawResponses({})
-                  setExpandedJson({})
-                  toast.success('JSON缓存已清理')
-                }}
-                className="w-full h-8 text-xs justify-start gap-2"
-              >
-                <Code className="w-3 h-3" />
-                清理JSON缓存 ({Object.keys(rawResponses).length})
-              </Button>
-                {/* Debug Info with Agent Statistics */}
-              <details className="text-xs">
-                <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                  調試信息
-                </summary>
-                <div className="mt-2 p-2 bg-muted/50 rounded text-xs space-y-1">                  
-                <div><strong>API地址:</strong> {API_BASE_URL}</div>
-                  <div><strong>API密鑰:</strong> {API_KEY}</div>
-                  <div><strong>當前模型:</strong> {selectedModel}</div>
-                  <div><strong>可用模型:</strong> {models.length}個</div>
-                  <div><strong>連接狀態:</strong> {apiStatus}</div>
-                  <div><strong>模式:</strong> {useAgent ? 'Agent' : 'Chat'}</div>
-                  <div><strong>JSON缓存:</strong> {Object.keys(rawResponses).length}条</div>
-                    <div><strong>LLM服务统计:</strong></div>
-                  <div className="ml-2 space-y-1">
-                    <div>• 总调用次数: {llmStats.totalCalls}</div>
-                    <div>• 总Token数: {llmStats.totalTokens.toLocaleString()}</div>
-                    <div>• 平均响应时间: {llmStats.avgResponseTime.toFixed(0)}ms</div>
-                    <div>• 成功率: {(llmStats.successRate * 100).toFixed(1)}%</div>
-                    <div>• 失败次数: {llmStats.failureCount}</div>
-                  </div>
-                  
-                  <div><strong>Agent统计:</strong></div>
-                  <div className="ml-2 space-y-1">
-                    {(() => {
-                      const agentMessages = messages.filter(m => m.mode === 'agent' && m.role === 'assistant')
-                      const totalExecutionTime = agentMessages.reduce((sum, m) => sum + (m.execution_time || 0), 0)
-                      const totalSteps = agentMessages.reduce((sum, m) => sum + (m.steps_taken || 0), 0)
-                      const totalToolUsage = agentMessages.reduce((sum, m) => sum + (m.tools_used?.length || 0), 0)
-                      const avgExecutionTime = agentMessages.length > 0 ? totalExecutionTime / agentMessages.length : 0
-                      const avgStepsPerMessage = agentMessages.length > 0 ? totalSteps / agentMessages.length : 0
-                      const uniqueToolsUsed = Array.from(new Set(
-                        agentMessages.flatMap(m => m.tools_used?.map(tool => tool.name) || [])
-                      ))
-                      
-                      return (
-                        <>
-                          <div>• Agent消息: {agentMessages.length}</div>
-                          <div>• 总执行时间: {totalExecutionTime.toFixed(2)}s</div>
-                          <div>• 平均执行时间: {avgExecutionTime.toFixed(2)}s</div>
-                          <div>• 总执行步骤: {totalSteps}</div>
-                          <div>• 平均步骤数: {avgStepsPerMessage.toFixed(1)}</div>
-                          <div>• 工具调用次数: {totalToolUsage}</div>
-                          <div>• 使用的工具: {uniqueToolsUsed.join(', ') || '无'}</div>
-                          <div>• 记忆模式: {enableMemory ? '✓' : '✗'}</div>
-                          <div>• 反思模式: {enableReflection ? '✓' : '✗'}</div>
-                          <div>• React模式: {enableReactMode ? '✓' : '✗'}</div>
-                        </>
-                      )
-                    })()}
-                  </div>
-                  
-                  <div><strong>功能狀態:</strong></div>
-                  <div className="ml-2">
-                    • 搜索: {enableSearch ? '✓' : '✗'}<br/>
-                    • MCP: {enableMcp ? '✓' : '✗'}<br/>
-                    {useAgent && (
-                      <>
-                        • 記憶: {enableMemory ? '✓' : '✗'}<br/>
-                        • 反思: {enableReflection ? '✓' : '✗'}<br/>
-                        • React: {enableReactMode ? '✓' : '✗'}<br/>
-                      </>
-                    )}
-                    {!useAgent && (
-                      <>• 禁用歷史: {disableHistory ? '✓' : '✗'}</>
-                    )}
-                    <br/>
-                    • 紧凑模式: {compactMode ? '✓' : '✗'}<br/>
-                    • 显示时间: {showTimestamps ? '✓' : '✗'}<br/>
-                    • 模型信息: {showModelInfo ? '✓' : '✗'}
-                  </div>
-                </div>
-              </details>
-            </div>
-          </div>
-        </div>
-      </div>
-      {/* Main Chat Area - 移除顶部分隔线 */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Header - 移除底部边框 */}
-        <div className="h-14 flex items-center justify-between px-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="flex items-center gap-3">
-            {!sidebarOpen && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setSidebarOpen(true)}
-                className="h-8 w-8"
-              >
-                <PanelLeft className="w-4 h-4" />
-              </Button>
-            )}
+      {/* 全新 Shadcn UI 风格的 Sidebar */}
+      <Sidebar 
+        apiStatus={apiStatus}
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        chatHistory={chatHistory}
+        currentChatId={currentChatId}
+        currentPage={currentPage}
+        setCurrentPage={setCurrentPage}
+        fileStats={fileStats}
+        searchResults={searchResults}
+        createNewChat={createNewChat}
+        loadChat={loadChat}
+        deleteChat={deleteChat}
+        testConnection={testConnection}
+        clearAllHistory={clearAllHistory}
+        importChatData={importChatData}
+      />
             
-            <div className="flex items-center gap-4">
-
-            
-            {/* Model Selector - 修复图标调用问题 */}
-            <Select value={selectedModel} onValueChange={setSelectedModel}>
-              <SelectTrigger className="w-[280px] h-10 bg-background/80 border-border/60 hover:border-border/80 rounded-xl text-sm font-medium transition-all duration-200 hover:shadow-sm">
-                <SelectValue placeholder="选择模型">
-                  <div className="flex items-center gap-2 min-w-0">
-                    {/* 使用模型开发者图标 */}
-                    {getModelDeveloperIcon(selectedModel, models.find(m => m.id === selectedModel)?.owned_by || '')}
-                    <span className="truncate font-medium">
-                      {models.find(m => m.id === selectedModel)?.name || '选择模型'}
-                    </span>
-                  </div>
-                </SelectValue>
-              </SelectTrigger>
-              
-              <SelectContent className="w-[320px] max-h-[500px] bg-background/95 backdrop-blur-xl border-border/50 rounded-xl shadow-xl overflow-hidden">
-                {Object.entries(groupModelsByProvider(models)).map(([provider, providerModels]) => (
-                  <div key={provider}>
-                    {/* Provider Header - 使用提供商图标 */}
-                    <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm">
-                      <div className="flex items-center gap-2 px-4 py-3 border-b border-border/20">
-                        {getProviderIcon(provider)}
-                        <span className="font-semibold text-sm">{getProviderDisplayName(provider)}</span>
-                        <span className="ml-auto text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md">
-                          {providerModels.length}
-                        </span>
-                      </div>
-                    </div>
-                    
-                    {/* Models - 修复选中外框被裁切的问题 */}
-                    <div className="py-1 px-1">
-                      {providerModels.map((model) => (
-                        <SelectItem 
-                          key={model.id} 
-                          value={model.id}
-                          className={cn(
-                            "rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/80 focus:bg-accent/80 data-[highlighted]:bg-accent/60 mx-1 my-1 px-3 py-2.5",
-                            // 修复：为选中状态的ring留出足够空间，并确保不被裁切
-                            selectedModel === model.id && "ring-2 ring-primary/60 bg-primary/10 border-primary/30 ring-inset"
-                          )}
-                        >
-                          <div className="flex items-center gap-3 min-w-0 w-full">
-                            {/* 使用模型开发者图标而不是提供商图标 */}
-                            {getModelDeveloperIcon(model.id, model.owned_by)}
-                            <div className="min-w-0 flex-1">
-                              <div className="font-medium text-sm truncate">{model.name}</div>
-                              <div className="text-xs text-muted-foreground truncate">{model.id}</div>
-                            </div>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                
-                {/* Footer - 现在在 SelectContent 内部的底部 */}
-                <div className="sticky bottom-0 bg-background/95 backdrop-blur-sm border-t border-border/20 px-4 py-3">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>共 {models.length} 个模型</span>
-                    <div className="flex items-center gap-1.5">
-                      <div className={cn(
-                        "w-2 h-2 rounded-full",
-                        apiStatus === 'connected' && "bg-green-500",
-                        apiStatus === 'disconnected' && "bg-red-500",
-                        apiStatus === 'testing' && "bg-yellow-500 animate-pulse"
-                      )} />
-                      <span>
-                        {apiStatus === 'connected' && '已连接'}
-                        {apiStatus === 'disconnected' && '未连接'}
-                        {apiStatus === 'testing' && '测试中'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </SelectContent>
-            </Select>
-              {/* Connection Status Indicator */}
-              <div className="flex items-center gap-1">
-                <div className={cn(
-                  "w-2 h-2 rounded-full",
-                  apiStatus === 'connected' && "bg-green-500",
-                  apiStatus === 'disconnected' && "bg-red-500",
-                  apiStatus === 'testing' && "bg-yellow-500 animate-pulse"
-                )} />
-              </div>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-          </div>
-        </div>        {/* Messages Area */}
-        <div 
-          ref={scrollContainerRef}
-          data-scroll-container="true"
-          className="flex-1 overflow-y-auto scroll-container"
-        >
-          {messages.length === 0 ? (
-            <div className="h-full flex items-center justify-center">
-              <div className="text-center max-w-md px-4">
-                <div className="w-16 h-16 bg-primary rounded-2xl mx-auto mb-6 flex items-center justify-center">
-                  <Bot className="w-8 h-8 text-primary-foreground" />
-                </div>
-                <h2 className="text-2xl font-semibold mb-3">
-                  你好！我是你的AI助手
-                </h2>
-                <p className="text-muted-foreground text-lg leading-relaxed">
-                  我可以回答问题、协助工作、进行创作等。有什么可以帮助你的吗？
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="max-w-4xl mx-auto px-4 messages-container">              {messages.map((message) => (
-                <MessageErrorBoundary key={message.id} messageId={message.id}>
-                  <div className="group py-6 last:border-0 message-item">
-                  <div className="flex gap-4">
-                    {/* Avatar */}
-                    <div className="flex-shrink-0">
-                      {message.role === 'user' ? (
-                        <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
-                          <User className="w-4 h-4 text-primary-foreground" />
-                        </div>
-                      ) : (
-                        <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center border">
-                          <Bot className="w-4 h-4 text-muted-foreground" />
-                        </div>
-                      )}
-                    </div>
-                      {/* Message Content */}
-                    <div className="flex-1 min-w-0 space-y-2">
-                      {/* Message Header with enhanced info */}
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="text-sm font-medium text-foreground">
-                            {message.role === 'user' ? '你' : 'AI助手'}
-                          </div>
-                          
-                          {/* 显示模式和模型信息 */}
-                          {showModelInfo && message.role === 'assistant' && (
-                            <div className="flex items-center gap-1 text-xs">
-                              {message.mode === 'agent' && (
-                                <div className="flex items-center gap-1 px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full">
-                                  <Brain className="w-3 h-3" />
-                                  <span>Agent</span>
-                                </div>
-                              )}
-                              {message.model_used && (
-                                <div className="px-2 py-0.5 bg-muted/70 text-muted-foreground rounded-full">
-                                  {message.model_used}
-                                </div>
-                              )}
-                              {message.execution_time && (
-                                <div className="flex items-center gap-1 px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full">
-                                  <Clock className="w-3 h-3" />
-                                  <span>{message.execution_time.toFixed(2)}s</span>
-                                </div>
-                              )}
-                              {message.steps_taken && message.steps_taken > 0 && (
-                                <div className="flex items-center gap-1 px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full">
-                                  <Zap className="w-3 h-3" />
-                                  <span>{message.steps_taken}步</span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                        
-                        {/* Timestamp */}
-                        {showTimestamps && (
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(message.timestamp).toLocaleTimeString('zh-CN', {
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </span>
-                        )}
-                      </div>
-                      
-                      {/* Agent模式执行追踪摘要 */}
-                      {message.mode === 'agent' && !compactMode && (message.tools_used?.length || 0) > 0 && (
-                        <div className="mb-3 p-2 bg-muted/30 rounded-lg border border-muted">
-                          <div className="flex items-center gap-2 mb-2">
-                            <Wrench className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-sm font-medium text-muted-foreground">工具使用情况</span>
-                          </div>
-                          <div className="flex flex-wrap gap-1">
-                            {message.tools_used?.map((tool, index) => (
-                              <div key={index} className="flex items-center gap-1 px-2 py-1 bg-background rounded text-xs">
-                                {tool.name === 'generateImage' && <Image className="w-3 h-3" />}
-                                {tool.name === 'search' && <Search className="w-3 h-3" />}
-                                {tool.name !== 'generateImage' && tool.name !== 'search' && <FileText className="w-3 h-3" />}
-                                <span>{tool.name}</span>
-                                {tool.duration && (
-                                  <span className="text-muted-foreground">({tool.duration}ms)</span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                        {/* Message Content */}                      
-                      <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-p:leading-relaxed prose-li:my-1">
-                        <ReactMarkdown 
-                          remarkPlugins={[remarkGfm]}
-                          rehypePlugins={[rehypeRaw]}
-                          urlTransform={(url) => {
-                            // 处理不同类型的URL
-                            console.log('🔄 Processing URL in ReactMarkdown:', url.substring(0, 50))
-                            
-                            // 如果URL是 attachment 相关的，使用特殊处理
-                            if (url.startsWith('attachment://') || url.startsWith('attachment:/') || url === 'attachment' || url === 'attachment_url' || url.includes('attachment')) {
-                              console.log('🔄 Transforming attachment URL in ReactMarkdown:', url, 'for message:', message.id)
-                              
-                              // 尝试查找消息 ID 对应的原始响应
-                              if (rawResponses[message.id]?.image_data_uri) {
-                                const imageUri = rawResponses[message.id].image_data_uri
-                                console.log('✅ Found image data for attachment:', imageUri.substring(0, 50))
-                                  // 如果已经是完整的URL，直接返回
-                                if (imageUri.startsWith('http://') || imageUri.startsWith('https://')) {
-                                  return imageUri
-                                }                                
-                                // 兼容旧格式：如果是 /api/v1/images/ 格式，转换为新格式
-                                else if (imageUri.startsWith('/api/v1/images/')) {
-                                  const newImageUri = imageUri.replace('/api/v1/images/', '/images/')
-                                  return `${API_BASE_URL}${newImageUri}`
-                                }
-                                // 如果已经包含代理前缀，直接返回
-                                else if (imageUri.startsWith('/api/backend/')) {
-                                  return imageUri
-                                }
-                                // 如果是相对路径，转换为完整URL                                
-                                else if (imageUri.startsWith('/images/')) {
-                                  return `${API_BASE_URL}${imageUri}`
-                                }
-                                // 如果是data URI，直接返回
-                                else if (imageUri.startsWith('data:')) {
-                                  return imageUri
-                                }
-                                else {
-                                  return imageUri                                }
-                              } else {
-                                console.warn('⚠️ No image data URI found for message:', message.id)
-                                console.warn('📦 Available rawResponses keys:', Object.keys(rawResponses))
-                                console.warn('🔍 Message content preview:', message.content?.substring(0, 100))
-                                // 返回空字符串而不是空的 attachment，这样可以避免显示破损的图片
-                                return ''
-                              }
-                            }                            
-                            // 兼容旧格式：如果是API图片URL，转换为完整URL
-                            if (url.startsWith('/api/v1/images/')) {
-                              console.log('🔄 Converting old API image URL to new format:', url)
-                              const newUrl = url.replace('/api/v1/images/', '/images/')
-                              return `${API_BASE_URL}${newUrl}`
-                            }
-                            // 如果已经包含代理前缀，直接返回
-                            else if (url.startsWith('/api/backend/')) {
-                              console.log('🔄 URL already has proxy prefix:', url)
-                              return url
-                            }
-                            // 如果是新格式的API图片URL，转换为完整URL
-                            else if (url.startsWith('/images/')) {
-                              console.log('🔄 Converting API image URL to full URL:', url)
-                              return `${API_BASE_URL}${url}`
-                            }
-                            
-                            return url
-                          }}
-                          components={{img: (props) => {
-                              console.log('🖼️ ReactMarkdown img props:', 
-                                props.src 
-                                  ? (typeof props.src === 'string' 
-                                      ? props.src.substring(0, 50) + '...' 
-                                      : '[non-string src]'
-                                    ) 
-                                  : '[empty]'
-                              )
-                              return <ImageComponent {...props} />
-                            },
-                            p: ({ children }) => {
-                              // 检查children中是否包含图片，如果有则使用div而不是p
-                              const hasImage = React.Children.toArray(children).some(child => 
-                                React.isValidElement(child) && child.type === 'img'
-                              )
-                                if (hasImage) {
-                                return (
-                                  <div className="text-foreground leading-relaxed mb-3">
-                                    {children}
-                                  </div>
-                                )
-                              }
-                              
-                              return (
-                                <p className="text-foreground leading-relaxed mb-3">
-                                  {children}
-                                </p>
-                              )
-                            },                            code: ({ children, className, ...props }) => {
-                              const isInline = !className
-                              return isInline ? (
-                                <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono text-foreground border" {...props}>
-                                  {children}
-                                </code>
-                              ) : (
-                                <code className="block bg-muted p-4 rounded-lg text-sm font-mono overflow-x-auto text-foreground border mb-4" {...props}>
-                                  {children}
-                                </code>
-                              )
-                            },
-                            h1: ({ children }) => (
-                              <h1 className="text-2xl font-bold mb-4 mt-6 text-foreground border-b border-border pb-2">
-                                {children}
-                              </h1>
-                            ),
-                            h2: ({ children }) => (
-                              <h2 className="text-xl font-semibold mb-3 mt-5 text-foreground">
-                                {children}
-                              </h2>
-                            ),
-                            h3: ({ children }) => (
-                              <h3 className="text-lg font-medium mb-2 mt-4 text-foreground">
-                                {children}
-                              </h3>
-                            ),
-                            ul: ({ children }) => (
-                              <ul className="list-disc list-inside mb-4 ml-4 space-y-1 text-foreground">
-                                {children}
-                              </ul>
-                            ),
-                            ol: ({ children }) => (
-                              <ol className="list-decimal list-inside mb-4 ml-4 space-y-1 text-foreground">
-                                {children}
-                              </ol>
-                            ),
-                            li: ({ children }) => (
-                              <li className="leading-relaxed text-foreground pl-2">
-                                {children}
-                              </li>
-                            ),
-                            blockquote: ({ children }) => (
-                              <blockquote className="border-l-4 border-primary pl-4 my-4 italic text-muted-foreground bg-muted/30 py-2">
-                                {children}
-                              </blockquote>
-                            ),
-                            strong: ({ children }) => (
-                              <strong className="font-semibold text-foreground">
-                                {children}
-                              </strong>
-                            ),
-                            em: ({ children }) => (
-                              <em className="italic text-foreground">
-                                {children}
-                              </em>
-                            )
-                          }}                        >
-                          {typeof message.content === 'string' ? message.content : JSON.stringify(message.content)}
-                        </ReactMarkdown>
-                      </div>                        {/* Message Actions */}
-                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => copyMessage(message.content)}
-                          className="h-7 px-2 text-xs"
-                        >
-                          <Copy className="w-3 h-3 mr-1" />
-                          复制
-                        </Button>
-                          {/* Agent模式专用按钮 */}
-                        {message.role === 'assistant' && message.mode === 'agent' && (
-                          <>
-                            {/* 推理步骤按钮 */}
-                            {message.reasoning_steps && message.reasoning_steps.length > 0 && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setShowReasoningSteps(prev => ({
-                                  ...prev,
-                                  [message.id]: !prev[message.id]
-                                }))}
-                                className="h-7 px-2 text-xs"
-                              >
-                                <Brain className="w-3 h-3 mr-1" />
-                                {showReasoningSteps[message.id] ? '隐藏推理' : `推理过程 (${message.reasoning_steps.length})`}
-                              </Button>
-                            )}
-                            
-                            {/* 执行轨迹按钮 */}
-                            {message.execution_trace && message.execution_trace.length > 0 && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setShowExecutionTrace(prev => ({
-                                  ...prev,
-                                  [message.id]: !prev[message.id]
-                                }))}
-                                className="h-7 px-2 text-xs"
-                              >
-                                <Eye className="w-3 h-3 mr-1" />
-                                {showExecutionTrace[message.id] ? '隐藏轨迹' : `执行轨迹 (${message.execution_trace.length})`}
-                              </Button>
-                            )}
-                            
-                            {/* 工具详情按钮 */}
-                            {message.tools_used && message.tools_used.length > 0 && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setShowToolDetails(prev => ({
-                                  ...prev,
-                                  [message.id]: !prev[message.id]
-                                }))}
-                                className="h-7 px-2 text-xs"
-                              >
-                                <Wrench className="w-3 h-3 mr-1" />
-                                {showToolDetails[message.id] ? '隐藏工具' : `工具详情 (${message.tools_used.length})`}
-                              </Button>
-                            )}
-                              {/* Agent详情按钮 */}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setShowAgentDetails(prev => ({
-                                ...prev,
-                                [message.id]: !prev[message.id]
-                              }))}
-                              className="h-7 px-2 text-xs"
-                            >
-                              <Settings className="w-3 h-3 mr-1" />
-                              {showAgentDetails[message.id] ? '隐藏详情' : 'Agent详情'}
-                            </Button>
-                          </>
-                        )}
-                        
-                        {/* JSON展开按钮 - 只对AI助手消息显示 */}
-                        {message.role === 'assistant' && rawResponses[message.id] && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setExpandedJson(prev => ({
-                              ...prev,
-                              [message.id]: !prev[message.id]
-                            }))}
-                            className="h-7 px-2 text-xs"
-                          >
-                            <Code className="w-3 h-3 mr-1" />
-                            {expandedJson[message.id] ? '隐藏JSON' : '显示JSON'}
-                          </Button>
-                        )}
-                        
-                        {/* 时间戳（当启用时显示在操作栏） */}
-                        {!showTimestamps && (
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(message.timestamp).toLocaleTimeString('zh-CN', {
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </span>
-                        )}
-                      </div>                        {/* Agent推理步骤展示 */}
-                      {message.role === 'assistant' && message.mode === 'agent' && showReasoningSteps[message.id] && message.reasoning_steps && (
-                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border">
-                          <div className="flex items-center gap-2 mb-3">
-                            <Brain className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-sm font-medium text-muted-foreground">推理过程</span>
-                          </div>
-                          <div className="space-y-2">
-                            {message.reasoning_steps.map((step, index) => (
-                              <div key={index} className="flex gap-3 p-2 bg-background rounded border-l-2 border-muted">
-                                <div className="flex-shrink-0 mt-1">
-                                  {step.type === 'thought' && <Brain className="w-4 h-4 text-blue-500" />}
-                                  {step.type === 'action' && <Zap className="w-4 h-4 text-green-500" />}
-                                  {step.type === 'observation' && <Eye className="w-4 h-4 text-purple-500" />}
-                                  {step.type === 'reflection' && <AlertCircle className="w-4 h-4 text-orange-500" />}
-                                </div>
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className="text-xs font-medium capitalize text-muted-foreground">
-                                      {step.type === 'thought' && '思考'}
-                                      {step.type === 'action' && '行动'}
-                                      {step.type === 'observation' && '观察'}
-                                      {step.type === 'reflection' && '反思'}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">
-                                      {new Date(step.timestamp).toLocaleTimeString()}
-                                    </span>
-                                  </div>
-                                  <div className="text-sm text-foreground whitespace-pre-wrap">
-                                    {step.content}
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      
-                      {/* Agent执行轨迹展示 */}
-                      {message.role === 'assistant' && message.mode === 'agent' && showExecutionTrace[message.id] && message.execution_trace && (
-                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border">
-                          <div className="flex items-center gap-2 mb-3">
-                            <Eye className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-sm font-medium text-muted-foreground">执行轨迹</span>
-                          </div>
-                          <div className="space-y-2">
-                            {message.execution_trace.map((trace, index) => (
-                              <div key={index} className="flex gap-3 p-2 bg-background rounded border-l-2 border-muted">
-                                <div className="flex-shrink-0 mt-1">
-                                  {trace.status === 'planning' && <Loader className="w-4 h-4 text-yellow-500 animate-spin" />}
-                                  {trace.status === 'executing' && <Zap className="w-4 h-4 text-blue-500" />}
-                                  {trace.status === 'completed' && <CheckCircle className="w-4 h-4 text-green-500" />}
-                                  {trace.status === 'failed' && <XCircle className="w-4 h-4 text-red-500" />}
-                                </div>
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className="text-xs font-medium text-muted-foreground">
-                                      步骤 {trace.step}
-                                    </span>
-                                    <span className="text-xs capitalize px-2 py-0.5 rounded-full">
-                                      {trace.status === 'planning' && (
-                                        <span className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300">规划中</span>
-                                      )}
-                                      {trace.status === 'executing' && (
-                                        <span className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">执行中</span>
-                                      )}
-                                      {trace.status === 'completed' && (
-                                        <span className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">已完成</span>
-                                      )}
-                                      {trace.status === 'failed' && (
-                                        <span className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">失败</span>
-                                      )}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">
-                                      {new Date(trace.timestamp).toLocaleTimeString()}
-                                    </span>
-                                  </div>                                  
-                                  <div className="text-sm text-foreground">
-                                    {trace.action}
-                                  </div>
-                                  {trace.details && Object.keys(trace.details).length > 0 && (
-                                    <div className="text-xs text-muted-foreground mt-1 p-2 bg-muted/30 rounded">
-                                      <pre className="whitespace-pre-wrap">{JSON.stringify(trace.details, null, 2)}</pre>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      
-                      {/* Agent详细信息展示 */}
-                      {message.role === 'assistant' && message.mode === 'agent' && showAgentDetails[message.id] && (
-                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border">
-                          <div className="flex items-center gap-2 mb-3">
-                            <Settings className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-sm font-medium text-muted-foreground">Agent详细信息</span>
-                          </div>
-                          <div className="grid grid-cols-2 gap-4 text-sm">
-                            <div>
-                              <span className="text-muted-foreground">执行时间:</span>
-                              <span className="ml-2 font-mono">{message.execution_time?.toFixed(3)}s</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">执行步骤:</span>
-                              <span className="ml-2 font-mono">{message.steps_taken || 0}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">使用模型:</span>
-                              <span className="ml-2 font-mono">{message.model_used}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">工具调用:</span>
-                              <span className="ml-2 font-mono">{message.tools_used?.length || 0}</span>
-                            </div>
-                            {message.reasoning_steps && (
-                              <div>
-                                <span className="text-muted-foreground">推理步骤:</span>
-                                <span className="ml-2 font-mono">{message.reasoning_steps.length}</span>
-                              </div>
-                            )}
-                            {message.execution_trace && (
-                              <div>
-                                <span className="text-muted-foreground">执行轨迹:</span>
-                                <span className="ml-2 font-mono">{message.execution_trace.length}</span>
-                              </div>
-                            )}
-                          </div>
-                          
-                          {/* 工具使用详情 */}
-                          {message.tools_used && message.tools_used.length > 0 && (
-                            <div className="mt-3 pt-3 border-t border-muted">
-                              <div className="text-sm font-medium text-muted-foreground mb-2">工具使用详情</div>
-                              <div className="space-y-2">
-                                {message.tools_used.map((tool, index) => (
-                                  <div key={index} className="flex justify-between items-center p-2 bg-background rounded">
-                                    <div className="flex items-center gap-2">
-                                      {tool.name === 'generateImage' && <Image className="w-4 h-4" />}
-                                      {tool.name === 'search' && <Search className="w-4 h-4" />}
-                                      {tool.name !== 'generateImage' && tool.name !== 'search' && <FileText className="w-4 h-4" />}
-                                      <span className="font-mono text-sm">{tool.name}</span>
-                                    </div>
-                                    <div className="text-xs text-muted-foreground">
-                                      {tool.duration && `${tool.duration}ms`}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                        {/* 原始JSON响应显示 */}
-                      {message.role === 'assistant' && rawResponses[message.id] && expandedJson[message.id] && (
-                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border"><div className="flex items-center gap-2 mb-2">
-                            <Code className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-sm font-medium text-muted-foreground">原始API响应</span>                            <div className="ml-auto flex gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  // 复制截断后的JSON
-                                  const processJsonForDisplay = (obj: any): any => {
-                                    if (typeof obj !== 'object' || obj === null) return obj
-                                    
-                                    const processed: any = Array.isArray(obj) ? [] : {}
-                                    
-                                    for (const [key, value] of Object.entries(obj)) {
-                                      if (typeof value === 'string') {
-                                        if (
-                                          (key.includes('image') || key.includes('data_uri') || key.includes('base64')) && 
-                                          value.length > 100
-                                        ) {
-                                          processed[key] = value.substring(0, 100) + `... [已截断，原长度: ${value.length}]`
-                                        } else {
-                                          processed[key] = value
-                                        }
-                                      } else if (typeof value === 'object' && value !== null) {
-                                        processed[key] = processJsonForDisplay(value)
-                                      } else {
-                                        processed[key] = value
-                                      }
-                                    }
-                                    
-                                    return processed
-                                  }
-                                  
-                                  const processedData = processJsonForDisplay(rawResponses[message.id])
-                                  navigator.clipboard.writeText(JSON.stringify(processedData, null, 2))
-                                  toast.success('截断后的JSON已复制')
-                                }}
-                                className="h-6 px-2 text-xs"
-                                title="复制截断后的JSON（图片数据已简化）"
-                              >
-                                <Copy className="w-3 h-3 mr-1" />
-                                复制截断版
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  const jsonString = JSON.stringify(rawResponses[message.id], null, 2)
-                                  navigator.clipboard.writeText(jsonString)
-                                  toast.success('原始JSON已复制')
-                                }}
-                                className="h-6 px-2 text-xs"
-                                title="复制原始完整的JSON（包含完整數據）"
-                              >
-                                <Copy className="w-3 h-3 mr-1" />
-                                复制原始版
-                              </Button>
-                            </div>
-                          </div>                          <div className="text-xs bg-background p-3 rounded border overflow-x-auto max-h-96 overflow-y-auto">
-                            {/* 显示原始完整的JSON */}
-                            <textarea 
-                              readOnly
-                              className="w-full h-full bg-transparent border-none resize-none text-muted-foreground font-mono text-xs"
-                              style={{ minHeight: '100px', maxHeight: '300px' }}
-                              value={JSON.stringify(rawResponses[message.id], null, 2)}
-                            />
-                          </div>
-                        </div>
-                      )}</div>
-                  </div>
-                </div>
-                </MessageErrorBoundary>
-              ))}
-                {/* Enhanced Loading State for Agent Mode */}
-              {isLoading && (
-                <div className="py-6">
-                  <div className="flex gap-4">
-                    <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center border">
-                      <Bot className="w-4 h-4 text-muted-foreground" />
-                    </div>
-                    <div className="flex-1 space-y-3">
-                      <div className="flex items-center gap-2">
-                        <div className="text-sm font-medium text-foreground">AI助手</div>
-                        {useAgent && (
-                          <div className="flex items-center gap-1 px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-xs">
-                            <Brain className="w-3 h-3 animate-pulse" />
-                            <span>Agent模式</span>
-                          </div>
-                        )}
-                      </div>
-                      
-                      {/* 基础加载指示 */}
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1">
-                          <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"></div>
-                          <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce [animation-delay:0.1s]"></div>
-                          <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce [animation-delay:0.2s]"></div>
-                        </div>
-                        <span className="text-sm text-muted-foreground">
-                          {useAgent ? '正在分析和规划...' : '正在思考...'}
-                        </span>
-                      </div>
-                      
-                      {/* Agent模式增强加载指示 */}
-                      {useAgent && (
-                        <div className="space-y-2 p-3 bg-muted/30 rounded-lg">
-                          <div className="text-xs font-medium text-muted-foreground mb-2">Agent处理状态</div>
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2 text-xs">
-                              <Loader className="w-3 h-3 animate-spin text-blue-500" />
-                              <span>分析用户请求...</span>
-                            </div>
-                            {enableMemory && (
-                              <div className="flex items-center gap-2 text-xs opacity-60">
-                                <Brain className="w-3 h-3" />
-                                <span>检索相关记忆...</span>
-                              </div>
-                            )}
-                            {enableMcp && (
-                              <div className="flex items-center gap-2 text-xs opacity-60">
-                                <Wrench className="w-3 h-3" />
-                                <span>准备工具...</span>
-                              </div>
-                            )}
-                            {enableReactMode && (
-                              <div className="flex items-center gap-2 text-xs opacity-60">
-                                <Zap className="w-3 h-3" />
-                                <span>React推理循环...</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                      
-                      {/* 模型和设置信息 */}
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>使用模型: {selectedModel}</span>
-                        {enableSearch && (
-                          <>
-                            <span>•</span>
-                            <span className="flex items-center gap-1">
-                              <Search className="w-3 h-3" />
-                              搜索已启用
-                            </span>
-                          </>
-                        )}
-                        {useAgent && enableReflection && (
-                          <>
-                            <span>•</span>
-                            <span className="flex items-center gap-1">
-                              <AlertCircle className="w-3 h-3" />
-                              反思模式
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>              )}
-              
-              <div ref={messagesEndRef} data-messages-end="true" />
-            </div>          )}
-        </div>        
-        {/* Input Area - 修复按钮点击和状态栏高度 */}
-<div className="bg-background">
-  <div className="max-w-4xl mx-auto p-4 relative">
-    {/* Scroll to bottom button - 相对于输入区域定位 */}
-    <AnimatePresence>
-      {showScrollToBottom && (
-        <motion.div
-          initial={{ opacity: 0, y: 20, scale: 0.8 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 10, scale: 0.9 }}
-          transition={{ 
-            type: "spring", 
-            stiffness: 400, 
-            damping: 25,
-            duration: 0.3
-          }}
-          className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-full mb-4 z-50"
-        >
-          <Button
-            onClick={scrollToBottom}
-            variant="ghost"
-            className="
-              flex items-center gap-2 px-4 py-2
-              bg-background/90 backdrop-blur-xl 
-              border border-border/50 
-              rounded-2xl shadow-xl hover:shadow-2xl 
-              text-foreground hover:text-foreground
-              font-medium text-sm
-              transition-all duration-300 ease-out
-              hover:border-primary/30 hover:scale-[1.02]
-              active:scale-[0.98]
-            "
-          >
-            <motion.div
-              animate={{ y: [0, 3, 0] }}
-              transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-            >
-              <ArrowDown className="w-4 h-4" />
-            </motion.div>
-            <span>回到底部</span>
-          </Button>
-        </motion.div>
-      )}
-    </AnimatePresence>
-
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: "easeOut" }}
-      className="relative"
-    >
-      {/* 输入框容器 */}
-      <div className="
-        relative flex flex-col w-full 
-        bg-gradient-to-br from-muted/20 via-muted/10 to-muted/20 
-        border border-border/50
-        rounded-3xl shadow-lg
-        transition-all duration-500 ease-out
-        hover:shadow-xl hover:border-border/70
-        focus-within:shadow-xl focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10
-        backdrop-blur-sm
-      ">
-        {/* 主输入区域 */}
-        <div className="relative">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onCompositionStart={handleCompositionStart}
-            onCompositionUpdate={handleCompositionUpdate}
-            onCompositionEnd={handleCompositionEnd}
-            placeholder="发送消息到你的 AI 助手..."
-            className="
-              w-full min-h-[60px] max-h-40 px-6 py-4 pr-20 
-              bg-transparent border-none resize-none 
-              focus-visible:outline-none 
-              placeholder:text-muted-foreground/50 text-foreground 
-              rounded-3xl text-base leading-relaxed
-              transition-all duration-300
-              selection:bg-primary/20
-            "
-            disabled={isLoading}
-            rows={1}
-          />
-          
-          {/* 发送按钮区域 - 移除motion包装 */}
-          <div className="absolute right-3 bottom-3 flex gap-2 items-center">
-            <AnimatePresence>
-              {isLoading && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.8, x: 20 }}
-                  animate={{ opacity: 1, scale: 1, x: 0 }}
-                  exit={{ opacity: 0, scale: 0.8, x: 20 }}
-                  transition={{ duration: 0.2, ease: "easeOut" }}
-                >
-                 <TooltipButton
-                  onClick={cancelRequest}
-                  tooltip="取消请求"
-                  variant="ghost"
-                  className="
-                    h-10 w-10 rounded-2xl 
-                    bg-destructive/10 hover:bg-destructive/20 
-                    text-destructive hover:text-destructive
-                    border border-destructive/20
-                  "
-                >
-                  <X className="w-4 h-4" />
-                </TooltipButton>
-                </motion.div>
-              )}
-            </AnimatePresence>
-            
-            <TooltipButton
-              onClick={sendMessage}
-              disabled={!input.trim() || isLoading}
-              tooltip={!input.trim() ? "请输入消息" : isLoading ? "处理中..." : "发送消息"}
-              className={cn(
-                "h-10 w-10 rounded-2xl transition-all duration-300 ease-out relative overflow-hidden",
-                input.trim() && !isLoading
-                  ? "bg-primary text-primary-foreground shadow-lg hover:shadow-xl hover:shadow-primary/25"
-                  : "bg-muted/50 text-muted-foreground cursor-not-allowed"
-              )}
-            >
-              {/* 按钮发光效果 */}
-              {input.trim() && !isLoading && (
-                <motion.div
-                  className="absolute inset-0 bg-gradient-to-r from-primary/20 to-primary/40 rounded-2xl"
-                  animate={{ opacity: [0.5, 1, 0.5] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                />
-              )}
-              
-              <motion.div
-                animate={isLoading ? { rotate: 360 } : {}}
-                transition={isLoading ? { duration: 1, repeat: Infinity, ease: "linear" } : {}}
-                className="relative z-10"
-              >
-                {isLoading ? (
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <Send className="w-4 h-4" />
-                )}
-              </motion.div>
-            </TooltipButton>
-          </div>
-        </div>
-        
-        {/* 功能按钮区域 - 修复overflow问题 */}
-<div className="px-6 pb-4 pt-2">
-  <div className="flex items-center justify-between">
-    {/* 确保容器有足够的padding来容纳动画 */}
-    <div className="flex items-center gap-2 overflow-visible py-1">
-      {/* 主要功能按钮 */}
-      <div className="flex items-center gap-2">
-        <TooltipButton
-          variant={useAgent ? "default" : "secondary"}
-          onClick={() => setUseAgent(!useAgent)}
-          tooltip="智能代理模式：更强的推理和工具使用能力"
-          className={cn(
-            "h-8 px-3 text-xs font-medium rounded-xl",
-            "shrink-0",
-            useAgent 
-              ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
-              : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
-          )}
-        >
-          <Brain className={cn(
-            "w-3 h-3 mr-1.5 transition-all duration-300",
-            useAgent && "animate-pulse"
-          )} />
-          Agent
-        </TooltipButton>
-        
-        <TooltipButton
-          variant={enableSearch ? "default" : "secondary"}
-          onClick={() => setEnableSearch(!enableSearch)}
-          tooltip="启用网络搜索功能"
-          className={cn(
-            "h-8 px-3 text-xs font-medium rounded-xl",
-            "shrink-0",
-            enableSearch 
-              ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
-              : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
-          )}
-        >
-          <Search className="w-3 h-3 mr-1.5" />
-          搜索
-        </TooltipButton>
-        
-        <TooltipButton
-          variant={enableMcp ? "default" : "secondary"}
-          onClick={() => setEnableMcp(!enableMcp)}
-          tooltip="MCP工具集成"
-          className={cn(
-            "h-8 px-3 text-xs font-medium rounded-xl",
-            "shrink-0",
-            enableMcp 
-              ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
-              : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
-          )}
-        >
-          <Wrench className="w-3 h-3 mr-1.5" />
-          MCP
-        </TooltipButton>
-      </div>
-      
-      {/* 分隔线 */}
-      <Separator.Root className="w-px h-6 bg-border/50 mx-2" />
-      
-      {/* Agent 专用功能 - 确保容器不会裁切动画 */}
-      <AnimatePresence mode="wait">
-        {useAgent ? (
-          <motion.div
-            key="agent-features"
-            initial={{ opacity: 0, width: 0 }}
-            animate={{ opacity: 1, width: "auto" }}
-            exit={{ opacity: 0, width: 0 }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
-            className="flex items-center gap-2 overflow-visible py-1"
-          >
-            <TooltipButton
-              variant={enableMemory ? "default" : "secondary"}
-              onClick={() => setEnableMemory(!enableMemory)}
-              tooltip="启用上下文记忆"
-              className={cn(
-                "h-8 px-3 text-xs font-medium rounded-xl",
-                "shrink-0 whitespace-nowrap",
-                enableMemory 
-                  ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
-                  : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
-              )}
-            >
-              <BookOpen className="w-3 h-3 mr-1.5" />
-              记忆
-            </TooltipButton>
-            
-            <TooltipButton
-              variant={enableReflection ? "default" : "secondary"}
-              onClick={() => setEnableReflection(!enableReflection)}
-              tooltip="启用自我反思模式"
-              className={cn(
-                "h-8 px-3 text-xs font-medium rounded-xl",
-                "shrink-0 whitespace-nowrap",
-                enableReflection 
-                  ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
-                  : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
-              )}
-            >
-              <AlertCircle className="w-3 h-3 mr-1.5" />
-              反思
-            </TooltipButton>
-            
-            <TooltipButton
-              variant={enableReactMode ? "default" : "secondary"}
-              onClick={() => setEnableReactMode(!enableReactMode)}
-              tooltip="推理-行动循环模式"
-              className={cn(
-                "h-8 px-3 text-xs font-medium rounded-xl",
-                "shrink-0 whitespace-nowrap",
-                enableReactMode 
-                  ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
-                  : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
-              )}
-            >
-              <Zap className="w-3 h-3 mr-1.5" />
-              ReAct
-            </TooltipButton>
-          </motion.div>
-        ) : (
-          <motion.div
-            key="chat-features"
-            initial={{ opacity: 0, width: 0 }}
-            animate={{ opacity: 1, width: "auto" }}
-            exit={{ opacity: 0, width: 0 }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
-            className="flex items-center gap-2 overflow-visible py-1"
-          >
-            <TooltipButton
-              variant={disableHistory ? "default" : "secondary"}
-              onClick={() => setDisableHistory(!disableHistory)}
-              tooltip="禁用对话历史记录"
-              className={cn(
-                "h-8 px-3 text-xs font-medium rounded-xl",
-                "shrink-0 whitespace-nowrap",
-                disableHistory 
-                  ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
-                  : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
-              )}
-            >
-              <BookOpen className="w-3 h-3 mr-1.5" />
-              禁用历史
-            </TooltipButton>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-    
-    <div className="shrink-0 ml-3">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="
-              h-8 px-3 text-xs font-medium rounded-xl 
-              bg-secondary/80 text-secondary-foreground 
-              hover:bg-secondary/90 hover:scale-[1.02]
-              active:scale-[0.98] transition-all duration-200
-              group shrink-0
-            "
-          >
-            <Settings className="w-3 h-3 mr-1.5 transition-transform duration-200 group-hover:rotate-90" />
-            设置
-            <ChevronDown className="w-3 h-3 ml-1.5 transition-transform duration-200 group-data-[state=open]:rotate-180" />
-          </Button>
-        </DropdownMenuTrigger>
-        
-        <DropdownMenuContent 
-          align="end"
-          side="top"
-          className="
-            w-48 p-2
-            bg-background/95 backdrop-blur-xl
-            border border-border/50 
-            rounded-xl shadow-xl
-            animate-in slide-in-from-bottom-2 fade-in-0 duration-300
-          "
-        >
-          <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground border-b border-border/30 mb-2">
-            显示设置
-          </div>
-          
-          <div className="space-y-1">
-            <SettingsMenuItem
-              icon={Minimize2}
-              label="紧凑模式"
-              isActive={compactMode}
-              onClick={() => setCompactMode(!compactMode)}
-            />
-            <SettingsMenuItem
-              icon={Clock}
-              label="显示时间戳"
-              isActive={showTimestamps}
-              onClick={() => setShowTimestamps(!showTimestamps)}
-            />
-            <SettingsMenuItem
-              icon={Bot}
-              label="模型信息"
-              isActive={showModelInfo}
-              onClick={() => setShowModelInfo(!showModelInfo)}
-            />
-            <SettingsMenuItem
-              icon={Eye}
-              label="性能指标"
-              isActive={showPerformanceMetrics}
-              onClick={() => setShowPerformanceMetrics(!showPerformanceMetrics)}
-            />
-          </div>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  </div>
+      <MainChatArea
+        currentPage={currentPage}
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        selectedModel={selectedModel}
+        setSelectedModel={setSelectedModel}
+        models={models}
+        apiStatus={apiStatus}
+        messages={messages}
+        isLoading={isLoading}
+        input={input}
+        setInput={setInput}
+        sendMessage={sendMessage}
+        cancelRequest={cancelRequest}
+        useAgent={useAgent}
+        setUseAgent={setUseAgent}
+        enableSearch={enableSearch}
+        setEnableSearch={setEnableSearch}
+        enableMcp={enableMcp}
+        setEnableMcp={setEnableMcp}
+        enableMemory={enableMemory}
+        setEnableMemory={setEnableMemory}
+        enableReflection={enableReflection}
+        setEnableReflection={setEnableReflection}
+        enableReactMode={enableReactMode}
+        setEnableReactMode={setEnableReactMode}
+        disableHistory={disableHistory}
+        setDisableHistory={setDisableHistory}
+        compactMode={compactMode}
+        setCompactMode={setCompactMode}
+        showTimestamps={showTimestamps}
+        setShowTimestamps={setShowTimestamps}
+        showModelInfo={showModelInfo}
+        setShowModelInfo={setShowModelInfo}
+        showPerformanceMetrics={showPerformanceMetrics}
+        setShowPerformanceMetrics={setShowPerformanceMetrics}
+        rawResponses={rawResponses}
+        expandedJson={expandedJson}
+        setExpandedJson={setExpandedJson}
+        showReasoningSteps={showReasoningSteps}
+        setShowReasoningSteps={setShowReasoningSteps}
+        showExecutionTrace={showExecutionTrace}
+        setShowExecutionTrace={setShowExecutionTrace}
+        showAgentDetails={showAgentDetails}
+        setShowAgentDetails={setShowAgentDetails}
+        showToolDetails={showToolDetails}
+        setShowToolDetails={setShowToolDetails}
+        fileStats={fileStats}
+        setFileStats={setFileStats}
+        searchResults={searchResults}
+        setSearchResults={setSearchResults}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        isSearching={isSearching}
+        searchChatHistory={searchChatHistory}
+        chatHistory={chatHistory}
+        loadChat={loadChat}
+        setCurrentPage={setCurrentPage}
+        copyMessage={copyMessage}
+        scrollToBottom={scrollToBottom}
+        showScrollToBottom={showScrollToBottom}
+        isAtBottom={isAtBottom}
+        messagesEndRef={messagesEndRef}
+        scrollContainerRef={scrollContainerRef}
+        textareaRef={textareaRef}
+        handleKeyDown={handleKeyDown}
+        handleCompositionStart={handleCompositionStart}
+        handleCompositionUpdate={handleCompositionUpdate}
+        handleCompositionEnd={handleCompositionEnd}
+        MessageErrorBoundary={MessageErrorBoundary}
+        TooltipButton={TooltipButton}
+        SettingsMenuItem={SettingsMenuItem}
+        ImageComponent={ImageComponent}
+        groupModelsByProvider={groupModelsByProvider}
+        getModelDeveloperIcon={getModelDeveloperIcon}
+        getProviderIcon={getProviderIcon}
+        getProviderDisplayName={getProviderDisplayName}
+        API_BASE_URL={API_BASE_URL}
+        API_KEY={API_KEY}
+      />
 </div>
-      </div>
-    </motion.div>
-    
-    {/* 状态栏 - 减少高度和内边距 */}
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.4, duration: 0.4 }}
-      className="flex items-center justify-center mt-3"
-    >
-      <div className="flex items-center gap-3 flex-wrap justify-center bg-gradient-to-r from-muted/30 via-muted/20 to-muted/30 px-4 py-2 rounded-xl border border-border/30 backdrop-blur-lg shadow-lg">
-        {/* 模式指示 */}
-        <div className="flex items-center gap-2">
-          <motion.div
-            animate={{
-              scale: [1, 1.2, 1],
-              backgroundColor: useAgent 
-                ? ["hsl(var(--primary))", "hsl(var(--primary))", "hsl(var(--primary))"]
-                : ["hsl(214 100% 50%)", "hsl(214 100% 60%)", "hsl(214 100% 50%)"]
-            }}
-            transition={{ duration: 2, repeat: Infinity }}
-            className="w-1.5 h-1.5 rounded-full"
-          />
-          {useAgent ? (
-            <Brain className="w-3 h-3 text-primary" />
-          ) : (
-            <Bot className="w-3 h-3 text-blue-500" />
-          )}
-          <span className="font-semibold text-xs">
-            {useAgent ? 'Agent模式' : 'Chat模式'}
-          </span>
-        </div>
-        
-        <Separator.Root className="w-px h-3 bg-border/50" />
-        
-        {/* 模型信息 */}
-        <span className="font-mono text-xs bg-background/50 px-2 py-0.5 rounded-md">
-          {selectedModel}
-        </span>
-        
-        <Separator.Root className="w-px h-3 bg-border/50" />
-        
-        {/* 连接状态 */}
-        <div className="flex items-center gap-1.5">
-          <motion.div
-            animate={{
-              scale: [1, 1.3, 1],
-              backgroundColor: 
-                apiStatus === 'connected' ? ["hsl(142 100% 50%)", "hsl(142 100% 60%)", "hsl(142 100% 50%)"] :
-                apiStatus === 'disconnected' ? ["hsl(0 100% 50%)", "hsl(0 100% 60%)", "hsl(0 100% 50%)"] :
-                ["hsl(45 100% 50%)", "hsl(45 100% 60%)", "hsl(45 100% 50%)"]
-            }}
-            transition={{ duration: 1.5, repeat: Infinity }}
-            className="w-1.5 h-1.5 rounded-full"
-          />
-          <span className="font-mono text-xs opacity-75">
-            {API_BASE_URL.replace('http://', '')}
-          </span>
-        </div>
-        
-        {/* 功能状态 */}
-        <AnimatePresence>
-          {(enableSearch || enableMcp || enableMemory || enableReflection || enableReactMode) && (
-            <motion.div
-              initial={{ opacity: 0, width: 0 }}
-              animate={{ opacity: 1, width: "auto" }}
-              exit={{ opacity: 0, width: 0 }}
-              transition={{ duration: 0.3 }}
-              className="flex items-center gap-2"
-            >
-              <Separator.Root className="w-px h-3 bg-border/50" />
-              <div className="flex items-center gap-1.5">
-                {enableSearch && <Search className="w-3 h-3 text-blue-500" />}
-                {enableMcp && <Wrench className="w-3 h-3 text-orange-500" />}
-                {useAgent && enableMemory && <Brain className="w-3 h-3 text-green-500" />}
-                {useAgent && enableReflection && <AlertCircle className="w-3 h-3 text-purple-500" />}
-                {useAgent && enableReactMode && <Zap className="w-3 h-3 text-blue-500" />}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        
-        {/* 加载状态 */}
-        <AnimatePresence>
-          {isLoading && (
-            <motion.div
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -10 }}
-              transition={{ duration: 0.2 }}
-              className="flex items-center gap-1.5"
-            >
-              <Separator.Root className="w-px h-3 bg-border/50" />
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                className="w-2.5 h-2.5 border-2 border-blue-500 border-t-transparent rounded-full"
-              />
-              <span className="font-medium text-xs text-blue-500">
-                {useAgent ? 'Agent处理中...' : '处理中...'}
-              </span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </motion.div>
-  </div>
-</div>
-
-      </div>
-    </div>
   )
 }
 

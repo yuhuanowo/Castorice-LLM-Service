@@ -67,13 +67,13 @@ async def chat_completion(
     
     此端点处理与大型语言模型的对话，支持工具调用、多模态输入和记忆更新
     """     
-    # 验证模型名称是否在允许列表中（GitHub、Gemini、Ollama或NVIDIA NIM模型）
+    # 验证模型名称是否在允许列表中（GitHub、Gemini、Ollama、NVIDIA NIM或OpenRouter模型）
     if (request.model not in settings.ALLOWED_GITHUB_MODELS and 
         request.model not in settings.ALLOWED_GEMINI_MODELS and 
         request.model not in settings.ALLOWED_OLLAMA_MODELS and
-        request.model not in settings.ALLOWED_NVIDIA_NIM_MODELS):
-        all_models = (settings.ALLOWED_GITHUB_MODELS + settings.ALLOWED_GEMINI_MODELS + 
-                     settings.ALLOWED_OLLAMA_MODELS + settings.ALLOWED_NVIDIA_NIM_MODELS)
+        request.model not in settings.ALLOWED_NVIDIA_NIM_MODELS and
+        request.model not in settings.ALLOWED_OPENROUTER_MODELS):
+        all_models = settings.ALLOWED_GITHUB_MODELS + settings.ALLOWED_GEMINI_MODELS + settings.ALLOWED_OLLAMA_MODELS + settings.ALLOWED_NVIDIA_NIM_MODELS + settings.ALLOWED_OPENROUTER_MODELS
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"模型 {request.model} 不受支持。支持的模型: {', '.join(all_models)}"
@@ -840,6 +840,17 @@ async def get_model_list(
                     capabilities=["chat", "text-generation"]
                 ))
         
+        # OpenRouter 模型
+        if not provider or provider.lower() == "openrouter":
+            for model_id in settings.ALLOWED_OPENROUTER_MODELS:
+                models.append(schemas.ModelInfo(
+                    model_id=model_id,
+                    model_name=model_id,
+                    provider="openrouter",
+                    description="OpenRouter AI模型",
+                    capabilities=["chat", "text-generation"]
+                ))
+        
         return schemas.ModelListResponse(
             models=models,
             total_count=len(models)
@@ -868,8 +879,10 @@ async def stream_chat(
     # 驗證模型
     if (request.model not in settings.ALLOWED_GITHUB_MODELS and 
         request.model not in settings.ALLOWED_GEMINI_MODELS and 
-        request.model not in settings.ALLOWED_OLLAMA_MODELS):
-        all_models = settings.ALLOWED_GITHUB_MODELS + settings.ALLOWED_GEMINI_MODELS + settings.ALLOWED_OLLAMA_MODELS
+        request.model not in settings.ALLOWED_OLLAMA_MODELS and
+        request.model not in settings.ALLOWED_NVIDIA_NIM_MODELS and
+        request.model not in settings.ALLOWED_OPENROUTER_MODELS):
+        all_models = settings.ALLOWED_GITHUB_MODELS + settings.ALLOWED_GEMINI_MODELS + settings.ALLOWED_OLLAMA_MODELS + settings.ALLOWED_NVIDIA_NIM_MODELS + settings.ALLOWED_OPENROUTER_MODELS
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"模型 {request.model} 不受支持。支持的模型: {', '.join(all_models)}"

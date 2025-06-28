@@ -954,7 +954,7 @@ class Settings(BaseSettings):
       # MCP协议配置
     MCP_VERSION: str = "0.1.0"  # MCP协议版本
     MCP_MAX_CONTEXT_TOKENS: int = 16000  # MCP最大上下文长度
-    MCP_SUPPORTED_MODELS: list = ["gpt-4o", "gpt-4o-mini", "o1", "DeepSeek-V3-0324", "gpt-4.1-mini", "gemini-1.5-pro", "Cohere-command-r-plus-08-2024", "Mistral-Nemo", "Mistral-Large-2411", "gemini-2.0-flash", "gemini-2.5-flash-preview-05-20", "qwen3:8b"]# 支持MCP的模型列表
+    MCP_SUPPORTED_MODELS: list = ["gpt-4o", "gpt-4o-mini", "o1", "DeepSeek-V3-0324", "gpt-4.1-mini", "gemini-1.5-pro", "Cohere-command-r-plus-08-2024", "Mistral-Nemo", "Mistral-Large-2411", "gemini-2.0-flash", "gemini-2.5-flash-preview-05-20", "qwen3:8b", "mistralai/mistral-small-3.2-24b-instruct-2506:free", "minimax/minimax-m1:extended", "deepseek/deepseek-chat-v3-0324:free", "mistralai/mistral-small-3.1-24b-instruct:free"]# 支持MCP的模型列表
     MCP_SUPPORT_ENABLED: bool = True  # 是否启用MCP协议支持
     
     # 数据库配置
@@ -970,7 +970,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_DEFAULT_MODEL: str = os.getenv("GEMINI_DEFAULT_MODEL", "gemini-2.0-flash")
     
-      # GitHub Token (用于 GitHub 的模型调用)
+    # GitHub Token (用于 GitHub 的模型调用)
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
     
     # Ollama API配置
@@ -982,6 +982,13 @@ class Settings(BaseSettings):
     NVIDIA_NIM_ENDPOINT: str = os.getenv("NVIDIA_NIM_ENDPOINT", "https://integrate.api.nvidia.com/v1/chat/completions")
     NVIDIA_NIM_API_KEY: str = os.getenv("NVIDIA_NIM_API_KEY", "")
     NVIDIA_NIM_DEFAULT_MODEL: str = os.getenv("NVIDIA_NIM_DEFAULT_MODEL", "google/gemma-3-27b-it")
+    
+    # OpenRouter API配置
+    OPENROUTER_ENDPOINT: str = os.getenv("OPENROUTER_ENDPOINT", "https://openrouter.ai/api/v1/chat/completions")
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_DEFAULT_MODEL: str = os.getenv("OPENROUTER_DEFAULT_MODEL", "mistralai/mistral-small-3.2-24b-instruct-2506:free")
+    OPENROUTER_APP_URL: str = os.getenv("OPENROUTER_APP_URL")  # OpenRouter建议提供referer
+    OPENROUTER_APP_TITLE: str = os.getenv("OPENROUTER_APP_TITLE")  # 应用名称
     
     # 工具配置
     CLOUDFLARE_API_KEY: str = os.getenv("CLOUDFLARE_API_KEY", "")
@@ -1057,6 +1064,18 @@ class Settings(BaseSettings):
         "nvidia/llama-3.1-nemotron-70b-instruct"
     ]
     
+    # OpenRouter模型列表
+    ALLOWED_OPENROUTER_MODELS: list = [
+        # 免费模型
+        "google/gemini-2.0-flash-exp:free",
+        "mistralai/mistral-small-3.2-24b-instruct-2506:free",
+        "minimax/minimax-m1:extended",
+        "deepseek/deepseek-chat-v3-0324:free",
+        "mistralai/mistral-small-3.1-24b-instruct:free",
+        "deepseek/deepseek-r1-0528:free",
+        "qwen/qwq-32b:free",
+    ]
+    
     # 模型使用限制
 
     # 不支持工具功能的模型列表
@@ -1065,7 +1084,7 @@ class Settings(BaseSettings):
         "Meta-Llama-3.1-405B-Instruct", "Meta-Llama-3.1-70B-Instruct", "Meta-Llama-3.1-8B-Instruct", "Meta-Llama-3-70B-Instruct", "Meta-Llama-3-8B-Instruct",
         "MAI-DS-R1", "Phi-3.5-MoE-instruct", "Phi-3.5-vision-instruct", "Phi-4", "Phi-4-multimodal-instruct", "Phi-4-reasoning",
         # NVIDIA NIM模型中可能不支持工具的模型
-        "google/gemma-2-2b-it", "meta/llama-3.2-1b-instruct", "microsoft/phi-3-mini-4k-instruct"
+        "google/gemma-2-2b-it", "meta/llama-3.2-1b-instruct", "microsoft/phi-3-mini-4k-instruct", "google/gemini-2.0-flash-exp:free", "deepseek/deepseek-r1-0528:free", "qwen/qwq-32b:free"
 
     ]
     
@@ -1164,8 +1183,16 @@ class Settings(BaseSettings):
         "mistralai/mixtral-8x7b-instruct-v0.1": Infinity,
         "mistralai/mixtral-8x22b-instruct-v0.1": Infinity,
         "nvidia/nemotron-4-340b-instruct": Infinity,  # 很大的模型，限制更严格
-        "nvidia/llama-3.1-nemotron-70b-instruct": Infinity
+        "nvidia/llama-3.1-nemotron-70b-instruct": Infinity,
     
+        # OpenRouter
+        "google/gemini-2.0-flash-exp:free": Infinity,
+        "mistralai/mistral-small-3.2-24b-instruct-2506:free": Infinity,
+        "minimax/minimax-m1:extended": Infinity,
+        "deepseek/deepseek-chat-v3-0324:free": Infinity,
+        "mistralai/mistral-small-3.1-24b-instruct:free": Infinity,
+        "deepseek/deepseek-r1-0528:free": Infinity,
+        "qwen/qwq-32b:free": Infinity,
     }
     
     # 默认语言
