@@ -177,7 +177,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             开始新对话
           </Button>
         </div>        {/* 4. 查询功能 */}
-        <div className="px-4 py-0.5">
+        {/* <div className="px-4 py-0.5">
           <Button
             variant={currentPage === 'search' ? 'secondary' : 'ghost'}
             className="w-full justify-start gap-2.5 h-8 rounded-lg font-medium transition-all duration-200 hover:bg-accent/60"
@@ -193,26 +193,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
             )}
           </Button>
-        </div>
+        </div> */}
 
         {/* 5. 档案库 */}
-        <div className="px-4 py-0.5">
-          <Button
-            variant={currentPage === 'files' ? 'secondary' : 'ghost'}
-            className="w-full justify-start gap-2.5 h-8 rounded-lg font-medium transition-all duration-200 hover:bg-accent/60"
-            onClick={() => {
-              setCurrentPage('files')
-            }}
-          >
-            <FileText className="w-4 h-4" />
-            <span>档案库</span>
-            {fileStats.total > 0 && (
-              <span className="ml-auto text-xs bg-purple-500/20 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded-md">
-                {fileStats.total}
-              </span>
-            )}
-          </Button>
-        </div>
 
         <div className="mx-4 my-2 h-px bg-border/60" />        
         {/* 6. 对话纪录 */}

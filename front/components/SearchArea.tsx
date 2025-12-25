@@ -41,6 +41,7 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+  sessionId?: string  // 添加 sessionId 字段
 }
 
 interface SearchAreaProps {

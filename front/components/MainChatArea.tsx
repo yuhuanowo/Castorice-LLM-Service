@@ -11,7 +11,7 @@ import {
   PanelLeft, Search, FileText, Bot, User, Copy, Brain, Clock, 
   Zap, Wrench, Image, Eye, Settings, AlertCircle, CheckCircle,
   XCircle, Loader, Code, ArrowDown, Send, X, Minimize2, BookOpen,
-  ChevronDown
+  ChevronDown, Lightbulb, Database
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -28,6 +28,7 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+  sessionId?: string  // 添加可选的sessionId字段
   execution_trace?: Array<{
     step: number
     action: string
@@ -77,6 +78,8 @@ interface MainChatAreaProps {
   apiStatus: 'connected' | 'disconnected' | 'testing'
   messages: Message[]
   isLoading: boolean
+  loadingSessionId: string | null // 添加正在加载的会话ID
+  currentLoadingModel: string // 添加当前正在加载的模型名称
   input: string
   setInput: (input: string) => void
   sendMessage: () => void
@@ -88,6 +91,8 @@ interface MainChatAreaProps {
   enableMcp: boolean
   setEnableMcp: (enable: boolean) => void
   enableMemory: boolean
+  currentChatId: string // 添加当前会话ID属性
+  setCurrentChatId: (chatId: string) => void // 添加设置当前会话ID的函数
   setEnableMemory: (enable: boolean) => void
   enableReflection: boolean
   setEnableReflection: (enable: boolean) => void
@@ -104,6 +109,7 @@ interface MainChatAreaProps {
   showPerformanceMetrics: boolean
   setShowPerformanceMetrics: (show: boolean) => void
   rawResponses: {[messageId: string]: any}
+  setRawResponses: React.Dispatch<React.SetStateAction<{[messageId: string]: any}>>
   expandedJson: {[messageId: string]: boolean}
   setExpandedJson: React.Dispatch<React.SetStateAction<{[messageId: string]: boolean}>>
   showReasoningSteps: {[messageId: string]: boolean}
@@ -132,6 +138,20 @@ interface MainChatAreaProps {
   messagesEndRef: React.RefObject<HTMLDivElement | null>
   scrollContainerRef: React.RefObject<HTMLDivElement | null>
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
+  agentStatus?: {[messageId: string]: {
+    currentStep?: string
+    totalSteps?: number
+    isReflecting?: boolean
+    toolsInUse?: string[]
+    memoryActive?: boolean
+    reactPhase?: string
+    reactSteps?: Array<{
+      type: string
+      label: string
+      complete: boolean
+      enabled?: boolean
+    }>
+  }}
   handleKeyDown: (e: React.KeyboardEvent) => void
   handleCompositionStart: (e: React.CompositionEvent) => void
   handleCompositionUpdate: (e: React.CompositionEvent) => void
@@ -151,13 +171,13 @@ interface MainChatAreaProps {
 
 export function MainChatArea({
   currentPage, sidebarOpen, setSidebarOpen, selectedModel, setSelectedModel,
-  models, apiStatus, messages, isLoading, input, setInput, sendMessage,
+  models, apiStatus, messages, isLoading, loadingSessionId, currentLoadingModel, input, setInput, sendMessage,
   cancelRequest, useAgent, setUseAgent, enableSearch, setEnableSearch,
   enableMcp, setEnableMcp, enableMemory, setEnableMemory, enableReflection,
   setEnableReflection, enableReactMode, setEnableReactMode, disableHistory,
-  setDisableHistory, compactMode, setCompactMode, showTimestamps,
+  setDisableHistory, compactMode, setCompactMode, showTimestamps, currentChatId, setCurrentChatId,
   setShowTimestamps, showModelInfo, setShowModelInfo, showPerformanceMetrics,
-  setShowPerformanceMetrics, rawResponses, expandedJson, setExpandedJson,
+  setShowPerformanceMetrics, rawResponses, setRawResponses, expandedJson, setExpandedJson,
   showReasoningSteps, setShowReasoningSteps, showExecutionTrace,
   setShowExecutionTrace, showAgentDetails, setShowAgentDetails,
   showToolDetails, setShowToolDetails, fileStats, setFileStats, searchResults,
@@ -168,8 +188,253 @@ export function MainChatArea({
   handleCompositionEnd, MessageErrorBoundary,
   TooltipButton, SettingsMenuItem, ImageComponent, groupModelsByProvider,
   getModelDeveloperIcon, getProviderIcon, getProviderDisplayName, 
-  API_BASE_URL, API_KEY
+  API_BASE_URL, API_KEY, agentStatus
 }: MainChatAreaProps) {
+
+  // 创建一个标志，用于跟踪是否已经恢复过设置
+  const [hasRestoredSettings, setHasRestoredSettings] = useState(false);
+
+  // 在组件挂载时恢复聊天选项设置
+  useEffect(() => {
+    // 避免重复恢复设置和服务端渲染问题
+    if (hasRestoredSettings || typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      // 恢复Agent模式和所有聊天选项
+      const savedUseAgent = localStorage.getItem('chatOptions_useAgent');
+      const savedEnableSearch = localStorage.getItem('chatOptions_enableSearch');
+      const savedEnableMcp = localStorage.getItem('chatOptions_enableMcp');
+      const savedEnableMemory = localStorage.getItem('chatOptions_enableMemory');
+      const savedEnableReflection = localStorage.getItem('chatOptions_enableReflection');
+      const savedEnableReactMode = localStorage.getItem('chatOptions_enableReactMode');
+      const savedDisableHistory = localStorage.getItem('chatOptions_disableHistory');
+      const savedCompactMode = localStorage.getItem('chatOptions_compactMode');
+      const savedShowTimestamps = localStorage.getItem('chatOptions_showTimestamps');
+      const savedShowModelInfo = localStorage.getItem('chatOptions_showModelInfo');
+      const savedShowPerformanceMetrics = localStorage.getItem('chatOptions_showPerformanceMetrics');
+      const savedSelectedModel = localStorage.getItem('chatOptions_selectedModel');
+      const savedCurrentPage = localStorage.getItem('chatOptions_currentPage');
+      const savedExpandedJson = localStorage.getItem('chatOptions_expandedJson');
+      const savedCurrentChatId = localStorage.getItem('chatOptions_currentChatId');
+
+      // 恢复所有设置，只在localStorage中有值时才调用setter
+      if (savedUseAgent !== null) setUseAgent(savedUseAgent === 'true');
+      if (savedEnableSearch !== null) setEnableSearch(savedEnableSearch === 'true');
+      if (savedEnableMcp !== null) setEnableMcp(savedEnableMcp === 'true');
+      if (savedEnableMemory !== null) setEnableMemory(savedEnableMemory === 'true');
+      if (savedEnableReflection !== null) setEnableReflection(savedEnableReflection === 'true');
+      if (savedEnableReactMode !== null) setEnableReactMode(savedEnableReactMode === 'true');
+      if (savedDisableHistory !== null) setDisableHistory(savedDisableHistory === 'true');
+      if (savedCompactMode !== null) setCompactMode(savedCompactMode === 'true');
+      if (savedShowTimestamps !== null) setShowTimestamps(savedShowTimestamps === 'true');
+      if (savedShowModelInfo !== null) setShowModelInfo(savedShowModelInfo === 'true');
+      if (savedShowPerformanceMetrics !== null) setShowPerformanceMetrics(savedShowPerformanceMetrics === 'true');
+      if (savedSelectedModel && models.some(m => m.id === savedSelectedModel)) {
+        setSelectedModel(savedSelectedModel);
+      }
+      if (savedCurrentPage && ['chat', 'search', 'files'].includes(savedCurrentPage)) {
+        setCurrentPage(savedCurrentPage as 'chat' | 'search' | 'files');
+      }
+      
+      // 恢复当前会话ID，如果有效的话
+      if (savedCurrentChatId && chatHistory && chatHistory.some(chat => chat.id === savedCurrentChatId)) {
+        // 只在会话ID存在于历史记录中时才设置
+        setCurrentChatId(savedCurrentChatId);
+        console.log('✅ 已恢复当前会话ID:', savedCurrentChatId);
+      }
+      
+      // 恢复所有JSON和显示状态
+      const savedFields = [
+        { key: 'showAgentDetails', setter: setShowAgentDetails },
+        { key: 'showReasoningSteps', setter: setShowReasoningSteps },
+        { key: 'showExecutionTrace', setter: setShowExecutionTrace },
+        { key: 'showToolDetails', setter: setShowToolDetails }
+      ];
+      
+      savedFields.forEach(field => {
+        const savedValue = localStorage.getItem(`chatOptions_${field.key}`);
+        if (savedValue) {
+          try {
+            const parsedValue = JSON.parse(savedValue);
+            if (typeof parsedValue === 'object') {
+              field.setter(parsedValue);
+            }
+          } catch (err) {
+            console.warn(`⚠️ 恢复${field.key}状态出错:`, err);
+          }
+        }
+      });
+      
+      // 恢复rawResponses数据，确保JSON按钮可以显示
+      const savedRawResponses = localStorage.getItem('chatOptions_rawResponses');
+      if (savedRawResponses && Object.keys(rawResponses).length === 0) { // 只在当前为空时恢复
+        try {
+          const parsedRawResponses = JSON.parse(savedRawResponses);
+          
+          // 检查是否有有效数据
+          if (typeof parsedRawResponses === 'object' && parsedRawResponses !== null && 
+              Object.keys(parsedRawResponses).length > 0) {
+            
+            // 验证数据结构是否正确
+            let hasValidData = false;
+            for (const key in parsedRawResponses) {
+              if (typeof parsedRawResponses[key] === 'object') {
+                hasValidData = true;
+                break;
+              }
+            }
+            
+            if (hasValidData) {
+              // 一次性设置原始响应数据
+              const mergedResponses = {...rawResponses};
+              for (const msgId in parsedRawResponses) {
+                if (!mergedResponses[msgId]) {
+                  mergedResponses[msgId] = parsedRawResponses[msgId];
+                }
+              }
+              setRawResponses(mergedResponses);
+              console.log('✅ 已恢复原始JSON响应数据:', Object.keys(parsedRawResponses).length, '条');
+            }
+          }
+        } catch (err) {
+          console.warn('⚠️ 恢复原始JSON响应数据出错:', err);
+          localStorage.removeItem('chatOptions_rawResponses');
+        }
+      }
+
+      // 标记为已恢复设置，避免重复恢复
+      setHasRestoredSettings(true);
+      
+      console.log('✅ 已恢复聊天选项设置');
+    } catch (error) {
+      console.warn('⚠️ 恢复聊天选项设置时出错:', error);
+    }
+  }, [
+    hasRestoredSettings, 
+    setUseAgent, setEnableSearch, setEnableMcp, setEnableMemory, 
+    setEnableReflection, setEnableReactMode, setDisableHistory, 
+    setCompactMode, setShowTimestamps, setShowModelInfo, 
+    setShowPerformanceMetrics, setSelectedModel, setCurrentPage,
+    setCurrentChatId, setExpandedJson, setShowAgentDetails,
+    setShowReasoningSteps, setShowExecutionTrace, setShowToolDetails,
+    setRawResponses, models, chatHistory, rawResponses
+  ]);
+
+  // 持久化保存聊天选项设置
+  useEffect(() => {
+    // 确保只在客户端执行并且已完成初始状态恢复后再保存
+    if (typeof window === 'undefined' || !hasRestoredSettings) {
+      return;
+    }
+
+    // 使用防抖技术减少保存频率
+    const saveSettingsId = setTimeout(() => {
+      try {
+        // 保存基本设置项
+        localStorage.setItem('chatOptions_useAgent', useAgent.toString());
+        localStorage.setItem('chatOptions_enableSearch', enableSearch.toString());
+        localStorage.setItem('chatOptions_enableMcp', enableMcp.toString());
+        localStorage.setItem('chatOptions_enableMemory', enableMemory.toString());
+        localStorage.setItem('chatOptions_enableReflection', enableReflection.toString());
+        localStorage.setItem('chatOptions_enableReactMode', enableReactMode.toString());
+        localStorage.setItem('chatOptions_disableHistory', disableHistory.toString());
+        localStorage.setItem('chatOptions_compactMode', compactMode.toString());
+        localStorage.setItem('chatOptions_showTimestamps', showTimestamps.toString());
+        localStorage.setItem('chatOptions_showModelInfo', showModelInfo.toString());
+        localStorage.setItem('chatOptions_showPerformanceMetrics', showPerformanceMetrics.toString());
+        localStorage.setItem('chatOptions_selectedModel', selectedModel);
+        localStorage.setItem('chatOptions_currentPage', currentPage);
+        
+        if (currentChatId) {
+          localStorage.setItem('chatOptions_currentChatId', currentChatId);
+        }
+        
+        // 保存UI显示状态
+        const statesToSave = [
+          { key: 'showAgentDetails', value: showAgentDetails },
+          { key: 'showReasoningSteps', value: showReasoningSteps },
+          { key: 'showExecutionTrace', value: showExecutionTrace },
+          { key: 'showToolDetails', value: showToolDetails }
+        ];
+        
+        statesToSave.forEach(state => {
+          try {
+            localStorage.setItem(`chatOptions_${state.key}`, JSON.stringify(state.value));
+          } catch (jsonErr) {
+            console.warn(`⚠️ 保存${state.key}状态出错:`, jsonErr);
+          }
+        });
+        
+        // 仅当有消息和rawResponses数据时才保存原始响应数据
+        if (messages.length > 0 && Object.keys(rawResponses).length > 0) {
+          try {
+            // 只保存最近5条消息的rawResponses，避免localStorage溢出
+            const recentMessages = messages
+              .filter(msg => msg.role === 'assistant' && msg.id)
+              .slice(-5)
+              .map(msg => msg.id);
+            
+            // 如果没有消息ID匹配，则跳过保存
+            if (recentMessages.length === 0) return;
+            
+            // 创建一个精简版的响应对象
+            const filteredResponses: {[key: string]: any} = {};
+            
+            // 只保存对应的rawResponses数据
+            let totalSize = 0;
+            for (const msgId of recentMessages) {
+              if (rawResponses[msgId]) {
+                // 提取关键字段
+                const originalResponse = rawResponses[msgId];
+                filteredResponses[msgId] = {
+                  content: originalResponse.content?.substring(0, 500), // 限制内容长度
+                  // 选择性包含其他必要字段
+                  ...(originalResponse.model_used && { model_used: originalResponse.model_used }),
+                  ...(originalResponse.execution_time && { execution_time: originalResponse.execution_time })
+                };
+                
+                // 有选择地添加更多详细信息
+                if (originalResponse.execution_trace?.length) {
+                  filteredResponses[msgId].has_execution_trace = true;
+                }
+                
+                if (originalResponse.reasoning_steps?.length) {
+                  filteredResponses[msgId].has_reasoning_steps = true;
+                }
+                
+                if (originalResponse.tools_used?.length) {
+                  filteredResponses[msgId].has_tools = true;
+                }
+              }
+            }
+            
+            // 只在有数据时保存
+            if (Object.keys(filteredResponses).length > 0) {
+              const jsonString = JSON.stringify(filteredResponses);
+              localStorage.setItem('chatOptions_rawResponses', jsonString);
+            }
+          } catch (err) {
+            console.warn('⚠️ 保存原始JSON响应数据出错:', err);
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ 保存聊天选项设置时出错:', error);
+      }
+    }, 500); // 500ms的防抖延迟
+    
+    // 清理函数
+    return () => clearTimeout(saveSettingsId);
+  }, [
+    hasRestoredSettings, useAgent, enableSearch, enableMcp, enableMemory, 
+    enableReflection, enableReactMode, disableHistory, compactMode, 
+    showTimestamps, showModelInfo, showPerformanceMetrics, selectedModel, 
+    currentChatId, currentPage, expandedJson, showAgentDetails, 
+    showReasoningSteps, showExecutionTrace, showToolDetails, 
+    // 对于大型对象，我们减少依赖更新频率
+    messages.length, Object.keys(rawResponses).length 
+  ]);
 
   return (
     <div className="flex-1 flex flex-col min-w-0">
@@ -325,13 +590,13 @@ export function MainChatArea({
                 </div>
                 
                 {/* 分隔线 */}
-                {(enableSearch || enableMcp || (useAgent && (enableMemory || enableReflection || enableReactMode)) || isLoading) && (
+                {(enableSearch || enableMcp || (useAgent && (enableMemory || enableReflection || enableReactMode)) || (isLoading && (!loadingSessionId || loadingSessionId === currentChatId))) && (
                   <div className="w-px h-3 bg-border/40" />
                 )}
                 
                 {/* 功能状态图标组 */}
                 <AnimatePresence>
-                  {(enableSearch || enableMcp || (useAgent && (enableMemory || enableReflection || enableReactMode)) || isLoading) && (
+                  {(enableSearch || enableMcp || (useAgent && (enableMemory || enableReflection || enableReactMode)) || (isLoading && (!loadingSessionId || loadingSessionId === currentChatId))) && (
                     <motion.div
                       initial={{ opacity: 0, width: 0 }}
                       animate={{ opacity: 1, width: "auto" }}
@@ -394,7 +659,7 @@ export function MainChatArea({
                           <Zap className="w-2.5 h-2.5" />
                         </motion.div>
                       )}
-                      {isLoading && (
+                      {isLoading && loadingSessionId === currentChatId && (
                         <motion.div
                           initial={{ scale: 0 }}
                           animate={{ scale: 1 }}
@@ -459,7 +724,26 @@ export function MainChatArea({
                 </div>
               </div>
             ) : (
-              <div className="max-w-4xl mx-auto px-4 messages-container">              {messages.map((message) => (
+              <div className="max-w-4xl mx-auto px-4 messages-container">              
+              {/* 过滤消息，只显示当前会话的消息或没有sessionId标记的旧消息 */}
+              {messages
+                .filter(message => !message.sessionId || message.sessionId === currentChatId)
+                // 如果正在加载当前会话的消息，忽略最后一条助手消息，避免闪烁
+                .filter((message, index, arr) => {
+                  // 如果不是正在加载状态，显示所有消息
+                  if (!isLoading || (loadingSessionId && loadingSessionId !== currentChatId)) {
+                    return true;
+                  }
+                  
+                  // 如果是正在加载状态，检查是否是最后一条助手消息
+                  const isLastAssistantMessage = 
+                    message.role === 'assistant' && 
+                    index === arr.length - 1 && 
+                    arr[arr.length - 2]?.role === 'user';
+                    
+                  return !isLastAssistantMessage;
+                })
+                .map((message) => (
                   <MessageErrorBoundary key={message.id} messageId={message.id}>
                     <div className="group py-6 last:border-0 message-item">
                   <div className="flex gap-4">
@@ -781,15 +1065,35 @@ export function MainChatArea({
                         )}
                         
                         {/* JSON展开按钮 - 只对AI助手消息显示 */}
-                        {message.role === 'assistant' && rawResponses[message.id] && (
+                        {message.role === 'assistant' && (
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => setExpandedJson(prev => ({
-                              ...prev,
-                              [message.id]: !prev[message.id]
-                            }))}
+                            onClick={() => {
+                              // 检查是否有有效的响应数据
+                              if (!rawResponses[message.id]) {
+                                // 如果没有响应数据，尝试创建一个基本的响应
+                                setRawResponses(prev => ({
+                                  ...prev,
+                                  [message.id]: {
+                                    content: message.content,
+                                    model_used: message.model_used,
+                                    execution_time: message.execution_time,
+                                    tools_used: message.tools_used,
+                                    reasoning_steps: message.reasoning_steps,
+                                    execution_trace: message.execution_trace,
+                                  }
+                                }));
+                              }
+                              // 切换展开状态
+                              setExpandedJson(prev => ({
+                                ...prev,
+                                [message.id]: !prev[message.id]
+                              }));
+                            }}
                             className="h-7 px-2 text-xs"
+                            // 禁用按钮如果当前正在生成这条消息
+                            disabled={isLoading && loadingSessionId === message.sessionId}
                           >
                             <Code className="w-3 h-3 mr-1" />
                             {expandedJson[message.id] ? '隐藏JSON' : '显示JSON'}
@@ -960,7 +1264,7 @@ export function MainChatArea({
                       )}
 
                         {/* 原始JSON响应显示 */}
-                      {message.role === 'assistant' && rawResponses[message.id] && expandedJson[message.id] && (
+                      {message.role === 'assistant' && expandedJson[message.id] && (
                         <div className="mt-3 p-3 bg-muted/50 rounded-lg border"><div className="flex items-center gap-2 mb-2">
                             <Code className="w-4 h-4 text-muted-foreground" />
                             <span className="text-sm font-medium text-muted-foreground">原始API响应</span>                            <div className="ml-auto flex gap-1">
@@ -1035,7 +1339,7 @@ export function MainChatArea({
                 </MessageErrorBoundary>
               ))}
                 {/* Enhanced Loading State for Agent Mode */}
-              {isLoading && (
+              {isLoading && (!loadingSessionId || loadingSessionId === currentChatId) && (
                 <div className="py-6">
                   <div className="flex gap-4">
                     <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center border">
@@ -1064,32 +1368,316 @@ export function MainChatArea({
                         </span>
                       </div>
                       
-                      {/* Agent模式增强加载指示 */}
+                      {/* Agent模式增强加载指示 - 动态根据agentStatus更新 */}
                       {useAgent && (
                         <div className="space-y-2 p-3 bg-muted/30 rounded-lg">
                           <div className="text-xs font-medium text-muted-foreground mb-2">Agent处理状态</div>
                           <div className="space-y-2">
-                            <div className="flex items-center gap-2 text-xs">
-                              <Loader className="w-3 h-3 animate-spin text-blue-500" />
-                              <span>分析用户请求...</span>
-                            </div>
-                            {enableMemory && (
-                              <div className="flex items-center gap-2 text-xs opacity-60">
-                                <Brain className="w-3 h-3" />
-                                <span>检索相关记忆...</span>
-                              </div>
-                            )}
-                            {enableMcp && (
-                              <div className="flex items-center gap-2 text-xs opacity-60">
-                                <Wrench className="w-3 h-3" />
-                                <span>准备工具...</span>
-                              </div>
-                            )}
-                            {enableReactMode && (
-                              <div className="flex items-center gap-2 text-xs opacity-60">
-                                <Zap className="w-3 h-3" />
-                                <span>React推理循环...</span>
-                              </div>
+                            {/* 根据agentStatus动态显示处理状态 */}
+                            {agentStatus && loadingSessionId && 
+                             (() => {
+                               // 直接使用loadingSessionId作为key查找状态
+                               // 这样可以获取到当前正在处理中的会话状态
+                               return agentStatus[loadingSessionId];
+                             })() ? (
+                              <>
+                                {(() => {
+                                  // 直接获取当前加载会话的状态
+                                  const status = agentStatus[loadingSessionId];
+                                  
+                                  // 确保状态对象存在
+                                  if (!status) return null;
+                                  
+                                  // 提取需要的状态值，并提供默认值
+                                  const totalSteps = status.totalSteps || 0;
+                                  const reactPhase = status.reactPhase || '';
+                                  const reactSteps = status.reactSteps || [];
+                                  const memoryActive = status.memoryActive || false;
+                                  const toolsInUse = status.toolsInUse || [];
+                                  
+                                  return (
+                                    <>
+                                      {/* 执行轨迹样式的步骤显示 */}
+                                      <div className="space-y-2">
+                                        {/* 步骤1: 初始化 */}
+                                        <div className="flex gap-3 items-center">
+                                          <div className="flex-shrink-0">
+                                            {totalSteps >= 1 ? (
+                                              <CheckCircle className="w-3 h-3 text-green-500" />
+                                            ) : (
+                                              <Loader className="w-3 h-3 animate-spin text-blue-500" />
+                                            )}
+                                          </div>
+                                          <div className="flex-1">
+                                            <div className="flex items-center gap-1 text-xs">
+                                              <span className={`font-medium ${totalSteps >= 1 ? "text-green-600 dark:text-green-400" : "text-blue-600 dark:text-blue-400"}`}>
+                                                初始化Agent
+                                              </span>
+                                              {totalSteps >= 1 && (
+                                                <span className="text-xs text-muted-foreground ml-1">✓</span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+                                        
+                                        {/* 步骤2: 分析用户请求 */}
+                                        <div className="flex gap-3 items-center">
+                                          <div className="flex-shrink-0">
+                                            {totalSteps >= 2 ? (
+                                              <CheckCircle className="w-3 h-3 text-green-500" />
+                                            ) : totalSteps >= 1 ? (
+                                              <Loader className="w-3 h-3 animate-spin text-blue-500" />
+                                            ) : (
+                                              <Clock className="w-3 h-3 text-muted-foreground opacity-40" />
+                                            )}
+                                          </div>
+                                          <div className="flex-1">
+                                            <div className="flex items-center gap-1 text-xs">
+                                              <span className={`font-medium 
+                                                ${totalSteps >= 2 ? "text-green-600 dark:text-green-400" : 
+                                                  totalSteps >= 1 ? "text-blue-600 dark:text-blue-400" : 
+                                                  "text-muted-foreground opacity-40"}`}>
+                                                分析用户请求
+                                              </span>
+                                              {totalSteps >= 2 && (
+                                                <span className="text-xs text-muted-foreground ml-1">✓</span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+                                        
+                                        {/* 步骤3: 检索记忆 */}
+                                        {memoryActive && (
+                                          <div className="flex gap-3 items-center">
+                                            <div className="flex-shrink-0">
+                                              {totalSteps >= 3 ? (
+                                                <CheckCircle className="w-3 h-3 text-green-500" />
+                                              ) : totalSteps >= 2 ? (
+                                                <Loader className="w-3 h-3 animate-spin text-blue-500" />
+                                              ) : (
+                                                <Clock className="w-3 h-3 text-muted-foreground opacity-40" />
+                                              )}
+                                            </div>
+                                            <div className="flex-1">
+                                              <div className="flex items-center gap-1 text-xs">
+                                                <Brain className="w-3 h-3 mr-1" />
+                                                <span className={`font-medium 
+                                                  ${totalSteps >= 3 ? "text-green-600 dark:text-green-400" : 
+                                                    totalSteps >= 2 ? "text-blue-600 dark:text-blue-400" : 
+                                                    "text-muted-foreground opacity-40"}`}>
+                                                  检索相关记忆
+                                                </span>
+                                                {totalSteps >= 3 && (
+                                                  <span className="text-xs text-muted-foreground ml-1">✓</span>
+                                                )}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
+                                        
+                                        {/* 步骤4: 准备工具 */}
+                                        <div className="flex gap-3 items-center">
+                                          <div className="flex-shrink-0">
+                                            {totalSteps >= 4 ? (
+                                              <CheckCircle className="w-3 h-3 text-green-500" />
+                                            ) : totalSteps >= 3 ? (
+                                              <Loader className="w-3 h-3 animate-spin text-blue-500" />
+                                            ) : (
+                                              <Clock className="w-3 h-3 text-muted-foreground opacity-40" />
+                                            )}
+                                          </div>
+                                          <div className="flex-1">
+                                            <div className="flex items-center gap-1 text-xs">
+                                              <Wrench className="w-3 h-3 mr-1" />
+                                              <span className={`font-medium 
+                                                ${totalSteps >= 4 ? "text-green-600 dark:text-green-400" : 
+                                                  totalSteps >= 3 ? "text-blue-600 dark:text-blue-400" : 
+                                                  "text-muted-foreground opacity-40"}`}>
+                                                准备工具
+                                              </span>
+                                              {totalSteps >= 4 && (
+                                                <span className="text-xs text-muted-foreground ml-1">✓</span>
+                                              )}
+                                            </div>
+                                            
+                                            {/* 显示工具使用情况 */}
+                                            {toolsInUse && 
+                                             toolsInUse.length > 0 && 
+                                             totalSteps >= 3 && (
+                                              <div className="mt-1 ml-4 flex flex-wrap gap-1">
+                                                {toolsInUse.map((tool, index) => (
+                                                  <span key={index} className="px-1.5 py-0.5 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded">
+                                                    {tool}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                        
+                                        {/* 步骤5: React推理循环 - 详细展示 */}
+                                        <div className="flex gap-3">
+                                          <div className="flex-shrink-0 mt-1">
+                                            {totalSteps >= 5 ? (
+                                              <CheckCircle className="w-3 h-3 text-green-500" />
+                                            ) : totalSteps >= 4 ? (
+                                              <Loader className="w-3 h-3 animate-spin text-blue-500" />
+                                            ) : (
+                                              <Clock className="w-3 h-3 text-muted-foreground opacity-40" />
+                                            )}
+                                          </div>
+                                          <div className="flex-1">
+                                            <div className="flex items-center gap-1 text-xs">
+                                              <Zap className="w-3 h-3 mr-1" />
+                                              <span className={`font-medium 
+                                                ${totalSteps >= 5 ? "text-green-600 dark:text-green-400" : 
+                                                  totalSteps >= 4 ? "text-blue-600 dark:text-blue-400" : 
+                                                  "text-muted-foreground opacity-40"}`}>
+                                                React推理循环
+                                              </span>
+                                              {totalSteps >= 5 && (
+                                                <span className="text-xs text-muted-foreground ml-1">✓</span>
+                                              )}
+                                            </div>
+                                            
+                                            {/* React循环的子步骤 - 使用reactSteps数据 */}
+                                            {totalSteps >= 4 && (
+                                              <div className="mt-1 ml-4 space-y-1 border-l-2 border-blue-200 dark:border-blue-800 pl-2">
+                                                {reactSteps && Array.isArray(reactSteps) && reactSteps.length > 0 ? (
+                                                  /* 如果有reactSteps数据，使用它 */
+                                                  <>
+                                                    {reactSteps.map((step, index) => {
+                                                      // 确保step是有效对象
+                                                      if (!step || typeof step !== 'object') {
+                                                        return null;
+                                                      }
+                                                      
+                                                      // 跳过未启用的步骤
+                                                      if (step.enabled === false) {
+                                                        return null;
+                                                      }
+                                                      
+                                                      return (
+                                                        <div key={index} className="flex items-center gap-1 text-[10px]">
+                                                          {step.type === 'thought' && (
+                                                            <Brain className={`w-2 h-2 ${step.complete ? 'text-blue-500' : 'text-muted-foreground opacity-40'}`} />
+                                                          )}
+                                                          {step.type === 'decision' && (
+                                                            <AlertCircle className={`w-2 h-2 ${step.complete ? 'text-orange-500' : 'text-muted-foreground opacity-40'}`} />
+                                                          )}
+                                                          {step.type === 'reflection' && (
+                                                            <Lightbulb className={`w-2 h-2 ${step.complete ? 'text-amber-500' : 'text-muted-foreground opacity-40'}`} />
+                                                          )}
+                                                          {step.type === 'action' && (
+                                                            <Zap className={`w-2 h-2 ${step.complete ? 'text-purple-500' : 'text-muted-foreground opacity-40'}`} />
+                                                          )}
+                                                          
+                                                          <span className={`${
+                                                            step.complete ? 
+                                                              (step.type === 'thought' ? 'text-blue-600 dark:text-blue-400' : 
+                                                               step.type === 'decision' ? 'text-orange-600 dark:text-orange-400' : 
+                                                               step.type === 'reflection' ? 'text-amber-600 dark:text-amber-400' : 
+                                                               'text-purple-600 dark:text-purple-400')
+                                                              : 'text-muted-foreground opacity-40'
+                                                          }`}>
+                                                            {step.label || '处理中...'}
+                                                            {step.complete && (
+                                                              <span className="ml-1 opacity-60">✓</span>
+                                                            )}
+                                                          </span>
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </>
+                                                ) : (
+                                                  /* 如果没有reactSteps数据，使用静态显示 */
+                                                  <>
+                                                    {/* 思考步骤 */}
+                                                    <div className="flex items-center gap-1 text-[10px]">
+                                                      <Brain className="w-2 h-2 text-blue-500" />
+                                                      <span className="text-blue-600 dark:text-blue-400">
+                                                        思考: 分析问题要点和解决方案
+                                                      </span>
+                                                    </div>
+                                                    
+                                                    {/* 决策步骤 */}
+                                                    <div className="flex items-center gap-1 text-[10px]">
+                                                      <AlertCircle className="w-2 h-2 text-orange-500" />
+                                                      <span className="text-orange-600 dark:text-orange-400">
+                                                        决策: 确定最佳应对策略
+                                                      </span>
+                                                    </div>
+                                                    
+                                                    {/* 反思步骤 - 只在启用反思时显示 */}
+                                                    {status.isReflecting && (
+                                                      <div className="flex items-center gap-1 text-[10px]">
+                                                        <Lightbulb className="w-2 h-2 text-amber-500" />
+                                                        <span className="text-amber-600 dark:text-amber-400">
+                                                          反思: 评估当前解决方案质量
+                                                        </span>
+                                                      </div>
+                                                    )}
+                                                    
+                                                    {/* 行动步骤 */}
+                                                    <div className="flex items-center gap-1 text-[10px]">
+                                                      <Zap className="w-2 h-2 text-purple-500" />
+                                                      <span className="text-purple-600 dark:text-purple-400">
+                                                        行动: 生成最终回复
+                                                      </span>
+                                                    </div>
+                                                  </>
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      
+                                      {/* 进度条 */}
+                                      {totalSteps > 0 && (
+                                        <div className="mt-1">
+                                          <div className="flex items-center justify-between text-xs mb-1">
+                                            <span className="text-muted-foreground">处理进度</span>
+                                            <span className="text-muted-foreground">{totalSteps}/5</span>
+                                          </div>
+                                          <div className="w-full bg-muted h-1 rounded-full overflow-hidden">
+                                            <div 
+                                              className="bg-blue-500 h-1 rounded-full transition-all duration-300 ease-out" 
+                                              style={{ width: `${Math.min(100, (totalSteps / 5) * 100)}%` }}
+                                            ></div>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </>
+                                  );
+                                })()}
+                              </>
+                            ) : (
+                              <>
+                                {/* 默认显示 - 当没有agentStatus数据时 */}
+                                <div className="flex items-center gap-2 text-xs">
+                                  <Loader className="w-3 h-3 animate-spin text-blue-500" />
+                                  <span>分析用户请求...</span>
+                                </div>
+                                {enableMemory && (
+                                  <div className="flex items-center gap-2 text-xs opacity-60">
+                                    <Brain className="w-3 h-3" />
+                                    <span>检索相关记忆...</span>
+                                  </div>
+                                )}
+                                {enableMcp && (
+                                  <div className="flex items-center gap-2 text-xs opacity-60">
+                                    <Wrench className="w-3 h-3" />
+                                    <span>准备工具...</span>
+                                  </div>
+                                )}
+                                {enableReactMode && (
+                                  <div className="flex items-center gap-2 text-xs opacity-60">
+                                    <Zap className="w-3 h-3" />
+                                    <span>React推理循环...</span>
+                                  </div>
+                                )}
+                              </>
                             )}
                           </div>
                         </div>
@@ -1097,7 +1685,7 @@ export function MainChatArea({
                       
                       {/* 模型和设置信息 */}
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>使用模型: {selectedModel}</span>
+                        <span>使用模型: {isLoading && currentLoadingModel ? currentLoadingModel : selectedModel}</span>
                         {enableSearch && (
                           <>
                             <span>•</span>
@@ -1245,14 +1833,14 @@ export function MainChatArea({
               transition-all duration-300
               selection:bg-primary/20
             "
-            disabled={isLoading}
+            disabled={isLoading && (!loadingSessionId || loadingSessionId === currentChatId)}
             rows={1}
           />
           
           {/* 发送按钮区域 - 移除motion包装 */}
           <div className="absolute right-3 bottom-3 flex gap-2 items-center">
             <AnimatePresence>
-              {isLoading && (
+              {isLoading && (!loadingSessionId || loadingSessionId === currentChatId) && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.8, x: 20 }}
                   animate={{ opacity: 1, scale: 1, x: 0 }}
@@ -1278,17 +1866,17 @@ export function MainChatArea({
             
             <TooltipButton
               onClick={sendMessage}
-              disabled={!input.trim() || isLoading}
-              tooltip={!input.trim() ? "请输入消息" : isLoading ? "处理中..." : "发送消息"}
+              disabled={!input.trim() || (isLoading && (!loadingSessionId || loadingSessionId === currentChatId))}
+              tooltip={!input.trim() ? "请输入消息" : (isLoading && (!loadingSessionId || loadingSessionId === currentChatId)) ? "处理中..." : "发送消息"}
               className={cn(
                 "h-10 w-10 rounded-2xl transition-all duration-300 ease-out relative overflow-hidden",
-                input.trim() && !isLoading
+                input.trim() && !(isLoading && (!loadingSessionId || loadingSessionId === currentChatId))
                   ? "bg-primary text-primary-foreground shadow-lg hover:shadow-xl hover:shadow-primary/25"
                   : "bg-muted/50 text-muted-foreground cursor-not-allowed"
               )}
             >
               {/* 按钮发光效果 */}
-              {input.trim() && !isLoading && (
+              {input.trim() && !(isLoading && (!loadingSessionId || loadingSessionId === currentChatId)) && (
                 <motion.div
                   className="absolute inset-0 bg-gradient-to-r from-primary/20 to-primary/40 rounded-2xl"
                   animate={{ opacity: [0.5, 1, 0.5] }}
@@ -1297,11 +1885,11 @@ export function MainChatArea({
               )}
               
               <motion.div
-                animate={isLoading ? { rotate: 360 } : {}}
-                transition={isLoading ? { duration: 1, repeat: Infinity, ease: "linear" } : {}}
+                animate={(isLoading && (!loadingSessionId || loadingSessionId === currentChatId)) ? { rotate: 360 } : {}}
+                transition={(isLoading && (!loadingSessionId || loadingSessionId === currentChatId)) ? { duration: 1, repeat: Infinity, ease: "linear" } : {}}
                 className="relative z-10"
               >
-                {isLoading ? (
+                {(isLoading && (!loadingSessionId || loadingSessionId === currentChatId)) ? (
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
                   <Send className="w-4 h-4" />

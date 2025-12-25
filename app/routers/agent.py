@@ -345,6 +345,16 @@ async def run_unified_agent(
         
         # 確保返回給前端的數據結構與存儲的一致
         # 使用格式化後的數據覆蓋原始數據
+        # 初始化這些變量，以防它們未在session_id存在時定義
+        execution_trace = result.get("execution_trace", [])
+        reasoning_steps = result.get("reasoning_steps", [])
+        tools_used = result.get("tools_used", [])
+        
+        # 只有當session_id存在時才會重新格式化這些數據
+        if request.session_id:
+            # 這些變量已在處理session時被定義
+            pass
+            
         result["execution_trace"] = execution_trace
         result["reasoning_steps"] = reasoning_steps  
         result["tools_used"] = tools_used

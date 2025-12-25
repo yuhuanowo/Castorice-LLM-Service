@@ -22,6 +22,85 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
+// 安全的 Blob URL 管理器
+class SafeBlobManager {
+  private static blobUrls = new Map<string, string>()
+  private static cleanupTimeouts = new Map<string, NodeJS.Timeout>()
+
+  static createObjectURL(blob: Blob, key?: string): string {
+    try {
+      const url = URL.createObjectURL(blob)
+      const urlKey = key || url
+      
+      // 存储 URL 以便后续清理
+      this.blobUrls.set(urlKey, url)
+      
+      // 设置自动清理，防止内存泄漏
+      const timeoutId = setTimeout(() => {
+        this.revokeObjectURL(urlKey)
+      }, 30000) // 30秒后自动清理
+      
+      this.cleanupTimeouts.set(urlKey, timeoutId)
+      
+      return url
+    } catch (error) {
+      console.warn('创建 Blob URL 失败:', error)
+      throw error
+    }
+  }
+
+  static revokeObjectURL(key: string): void {
+    try {
+      const url = this.blobUrls.get(key)
+      if (url) {
+        URL.revokeObjectURL(url)
+        this.blobUrls.delete(key)
+      }
+      
+      const timeoutId = this.cleanupTimeouts.get(key)
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+        this.cleanupTimeouts.delete(key)
+      }
+    } catch (error) {
+      console.warn('释放 Blob URL 失败:', error)
+    }
+  }
+
+  static revokeByPattern(pattern: string): void {
+    try {
+      const keysToRevoke = Array.from(this.blobUrls.keys()).filter(key => 
+        key.includes(pattern)
+      )
+      
+      keysToRevoke.forEach(key => this.revokeObjectURL(key))
+    } catch (error) {
+      console.warn('按模式清理 Blob URL 失败:', error)
+    }
+  }
+
+  static revokeAll(): void {
+    try {
+      for (const [key] of this.blobUrls) {
+        this.revokeObjectURL(key)
+      }
+    } catch (error) {
+      console.warn('清理所有 Blob URL 失败:', error)
+    }
+  }
+
+  static getUrl(key: string): string | undefined {
+    return this.blobUrls.get(key)
+  }
+
+  static getStats(): { total: number; keys: string[] } {
+    return {
+      total: this.blobUrls.size,
+      keys: Array.from(this.blobUrls.keys())
+    }
+  }
+}
+
 // 類型定義
 interface FileItem {
   file_id: string
@@ -200,7 +279,12 @@ export const useFileManager = (apiBaseUrl: string, apiKey: string) => {
   const fetchFileStats = useCallback(async () => {
     try {
       const response = await fetch(`${apiBaseUrl}/files?page_size=1000`, {
-        headers: { 'X-API-KEY': apiKey }
+        headers: { 
+              'X-API-KEY': apiKey,
+              'Accept': '*/*'
+            },
+            mode: 'cors', // 明确指定 CORS 模式
+            credentials: 'omit', // 不发送 cookies
       })
       if (response.ok) {
         const files = await response.json()
@@ -585,24 +669,72 @@ const ThumbnailGenerator = {
       const canvas = document.createElement('canvas')
       const ctx = canvas.getContext('2d')
       const img = document.createElement('img')
+      const urlKey = `thumbnail-img-${Date.now()}-${Math.random()}`
       
-      img.onload = () => {
-        // 計算縮圖尺寸
-        const { width, height } = img
-        const ratio = Math.min(maxSize / width, maxSize / height)
-        const newWidth = width * ratio
-        const newHeight = height * ratio
-        
-        canvas.width = newWidth
-        canvas.height = newHeight
-        
-        // 繪製縮圖
-        ctx?.drawImage(img, 0, 0, newWidth, newHeight)
-        resolve(canvas.toDataURL('image/jpeg', 0.8))
+      // 设置超时
+      const timeoutId = setTimeout(() => {
+        cleanup()
+        reject(new Error('图片加载超时'))
+      }, 5000)
+      
+      const cleanup = () => {
+        clearTimeout(timeoutId)
+        SafeBlobManager.revokeObjectURL(urlKey)
       }
       
-      img.onerror = reject
-      img.src = URL.createObjectURL(file)
+      img.onload = () => {
+        try {
+          // 計算縮圖尺寸
+          const { width, height } = img
+          if (width === 0 || height === 0) {
+            cleanup()
+            reject(new Error('图片尺寸无效'))
+            return
+          }
+          
+          const ratio = Math.min(maxSize / width, maxSize / height)
+          const newWidth = Math.max(1, Math.floor(width * ratio))
+          const newHeight = Math.max(1, Math.floor(height * ratio))
+          
+          canvas.width = newWidth
+          canvas.height = newHeight
+          
+          // 繪製縮圖
+          if (ctx) {
+            // 设置更好的图像渲染质量
+            ctx.imageSmoothingEnabled = true
+            ctx.imageSmoothingQuality = 'high'
+            ctx.fillStyle = '#ffffff' // 白色背景，避免透明度问题
+            ctx.fillRect(0, 0, newWidth, newHeight)
+            ctx.drawImage(img, 0, 0, newWidth, newHeight)
+            
+            // 使用更高质量的输出
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+            cleanup()
+            resolve(dataUrl)
+          } else {
+            cleanup()
+            reject(new Error('无法获取 Canvas 2D 上下文'))
+          }
+        } catch (error) {
+          cleanup()
+          reject(error)
+        }
+      }
+      
+      img.onerror = (error) => {
+        cleanup()
+        reject(new Error(`图片加载失败: ${error}`))
+      }
+      
+      try {
+        const objectUrl = SafeBlobManager.createObjectURL(file, urlKey)
+        img.crossOrigin = 'anonymous' // 处理跨域问题
+        img.src = objectUrl
+      } catch (error) {
+        cleanup()
+        reject(new Error(`创建 Object URL 失败: ${error}`))
+      }
     })
   },
   
@@ -612,25 +744,82 @@ const ThumbnailGenerator = {
       const video = document.createElement('video')
       const canvas = document.createElement('canvas')
       const ctx = canvas.getContext('2d')
+      const urlKey = `thumbnail-video-${Date.now()}-${Math.random()}`
+      
+      // 设置超时
+      const timeoutId = setTimeout(() => {
+        cleanup()
+        reject(new Error('视频加载超时'))
+      }, 10000)
+      
+      const cleanup = () => {
+        clearTimeout(timeoutId)
+        SafeBlobManager.revokeObjectURL(urlKey)
+      }
       
       video.onloadedmetadata = () => {
-        video.currentTime = Math.min(video.duration * 0.1, 1) // 取前10%或1秒的幀
+        try {
+          if (video.duration === 0 || isNaN(video.duration)) {
+            cleanup()
+            reject(new Error('视频时长无效'))
+            return
+          }
+          // 跳转到视频开始位置或10%处
+          video.currentTime = Math.min(video.duration * 0.1, 1)
+        } catch (error) {
+          cleanup()
+          reject(error)
+        }
       }
       
       video.onseeked = () => {
-        canvas.width = Math.min(video.videoWidth, 200)
-        canvas.height = Math.min(video.videoHeight, 200)
-        
-        ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
-        resolve(canvas.toDataURL('image/jpeg', 0.8))
-        
-        // 清理
-        URL.revokeObjectURL(video.src)
+        try {
+          if (video.videoWidth === 0 || video.videoHeight === 0) {
+            cleanup()
+            reject(new Error('视频尺寸无效'))
+            return
+          }
+          
+          const maxSize = 200
+          const ratio = Math.min(maxSize / video.videoWidth, maxSize / video.videoHeight)
+          const newWidth = Math.max(1, Math.floor(video.videoWidth * ratio))
+          const newHeight = Math.max(1, Math.floor(video.videoHeight * ratio))
+          
+          canvas.width = newWidth
+          canvas.height = newHeight
+          
+          if (ctx) {
+            ctx.fillStyle = '#000000' // 黑色背景
+            ctx.fillRect(0, 0, newWidth, newHeight)
+            ctx.drawImage(video, 0, 0, newWidth, newHeight)
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+            cleanup()
+            resolve(dataUrl)
+          } else {
+            cleanup()
+            reject(new Error('无法获取 Canvas 2D 上下文'))
+          }
+        } catch (error) {
+          cleanup()
+          reject(error)
+        }
       }
       
-      video.onerror = reject
-      video.src = URL.createObjectURL(file)
-      video.muted = true
+      video.onerror = (error) => {
+        cleanup()
+        reject(new Error(`视频加载失败: ${error}`))
+      }
+      
+      try {
+        const objectUrl = SafeBlobManager.createObjectURL(file, urlKey)
+        video.muted = true
+        video.crossOrigin = 'anonymous'
+        video.playsInline = true // 在移动设备上内联播放
+        video.src = objectUrl
+      } catch (error) {
+        cleanup()
+        reject(new Error(`创建视频 Object URL 失败: ${error}`))
+      }
     })
   },
   
@@ -666,11 +855,13 @@ const ThumbnailGenerator = {
 const useFilePreview = (apiBaseUrl?: string, apiKey?: string) => {
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({})
   const [loadingThumbnails, setLoadingThumbnails] = useState<Set<string>>(new Set())
+  const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set())
   
   const generateThumbnail = useCallback(async (file: FileItem, fileBlob?: Blob) => {
     const fileId = file.file_id
     
-    if (thumbnails[fileId] || loadingThumbnails.has(fileId)) {
+    // 如果已经有缩图、正在加载或已经失败过，则跳过
+    if (thumbnails[fileId] || loadingThumbnails.has(fileId) || failedThumbnails.has(fileId)) {
       return thumbnails[fileId]
     }
     
@@ -680,35 +871,84 @@ const useFilePreview = (apiBaseUrl?: string, apiKey?: string) => {
       let thumbnailUrl = ''
       
       if (!fileBlob && apiBaseUrl && apiKey) {
-        // 如果沒有提供blob，先從API獲取（需要傳遞 API Key）
-        const response = await fetch(`${apiBaseUrl}/files/${fileId}`, {
-          headers: { 'X-API-KEY': apiKey }
-        })
-        if (!response.ok) throw new Error('Failed to fetch file')
-        fileBlob = await response.blob()
+        // 使用更安全的请求方式
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 10000) // 10秒超时
+        
+        try {
+          const response = await fetch(`${apiBaseUrl}/files/${fileId}`, {
+            headers: { 
+              'X-API-KEY': apiKey,
+              'Accept': '*/*'
+            },
+            mode: 'cors', // 明确指定 CORS 模式
+            credentials: 'omit', // 不发送 cookies
+            signal: controller.signal
+          })
+          clearTimeout(timeoutId)
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+          }
+          
+          fileBlob = await response.blob()
+        } catch (fetchError) {
+          clearTimeout(timeoutId)
+          console.warn(`文件 ${file.filename} 获取失败:`, fetchError)
+          throw fetchError
+        }
       }
       
       if (!fileBlob) {
         throw new Error('無法獲取檔案內容')
       }
       
+      // 验证 blob 的有效性
+      if (fileBlob.size === 0) {
+        throw new Error('檔案內容為空')
+      }
+      
       const tempFile = new File([fileBlob], file.filename, { type: fileBlob.type })
       
+      // 增加错误处理和超时控制
+      const generateWithTimeout = (generator: () => Promise<string>, timeout: number = 5000) => {
+        return Promise.race([
+          generator(),
+          new Promise<string>((_, reject) => 
+            setTimeout(() => reject(new Error('缩图生成超时')), timeout)
+          )
+        ])
+      }
+      
       if (isImageFile(file.filename)) {
-        thumbnailUrl = await ThumbnailGenerator.generateImageThumbnail(tempFile)
+        thumbnailUrl = await generateWithTimeout(() => 
+          ThumbnailGenerator.generateImageThumbnail(tempFile)
+        )
       } else if (isVideoFile(file.filename)) {
-        thumbnailUrl = await ThumbnailGenerator.generateVideoThumbnail(tempFile)
+        thumbnailUrl = await generateWithTimeout(() => 
+          ThumbnailGenerator.generateVideoThumbnail(tempFile)
+        )
       } else if (file.filename.toLowerCase().endsWith('.pdf')) {
-        thumbnailUrl = await ThumbnailGenerator.generatePdfThumbnail(tempFile)
+        thumbnailUrl = await generateWithTimeout(() => 
+          ThumbnailGenerator.generatePdfThumbnail(tempFile)
+        )
       }
       
       if (thumbnailUrl) {
         setThumbnails(prev => ({ ...prev, [fileId]: thumbnailUrl }))
+        // 从失败列表中移除（如果存在）
+        setFailedThumbnails(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(fileId)
+          return newSet
+        })
       }
       
       return thumbnailUrl
     } catch (error) {
-      console.error('縮圖生成失敗:', error)
+      console.warn(`文件 ${file.filename} 縮圖生成失敗:`, error)
+      // 添加到失败列表，避免重复尝试
+      setFailedThumbnails(prev => new Set(prev).add(fileId))
       return null
     } finally {
       setLoadingThumbnails(prev => {
@@ -717,7 +957,7 @@ const useFilePreview = (apiBaseUrl?: string, apiKey?: string) => {
         return newSet
       })
     }
-  }, [thumbnails, loadingThumbnails, apiBaseUrl, apiKey])
+  }, [thumbnails, loadingThumbnails, failedThumbnails, apiBaseUrl, apiKey])
   
   const isThumbnailLoading = useCallback((fileId: string) => {
     return loadingThumbnails.has(fileId)
@@ -796,12 +1036,32 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
   // 获取带认证的文件 Blob URL
   const getAuthenticatedFileUrl = useCallback(async (fileId: string): Promise<string> => {
     try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 15000) // 15秒超时
+      
       const response = await fetch(`${apiBaseUrl}/files/${fileId}`, {
-        headers: { 'X-API-KEY': apiKey || '' }
+        headers: { 
+          'X-API-KEY': apiKey || '',
+          'Accept': '*/*'
+        },
+        mode: 'cors',
+        credentials: 'omit',
+        signal: controller.signal
       })
-      if (!response.ok) throw new Error('文件获取失败')
+      
+      clearTimeout(timeoutId)
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+      
       const blob = await response.blob()
-      return URL.createObjectURL(blob)
+      if (blob.size === 0) {
+        throw new Error('文件内容为空')
+      }
+      
+      const urlKey = `file-${fileId}-${Date.now()}`
+      return SafeBlobManager.createObjectURL(blob, urlKey)
     } catch (error) {
       console.error('获取文件失败:', error)
       throw error
@@ -811,29 +1071,62 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
   // 新增：圖片預覽時 fetch blob 並產生本地 URL
   useEffect(() => {
     if (isOpen && file && isImageFile(file.filename)) {
-      let revokeUrl: string | null = null
+      let urlKey: string | null = null
+      let abortController: AbortController | null = null
+      
       setFetchingImage(true)
-      fetch(getFileUrl(file.file_id), {
-        headers: { 'X-API-KEY': apiKey || '' }
-      })
-        .then(res => {
-          if (!res.ok) throw new Error('圖片獲取失敗')
-          return res.blob()
-        })
-        .then(blob => {
-          const url = URL.createObjectURL(blob)
+      setImageLoadError(false)
+      setImageLoading(true)
+      
+      const fetchImage = async () => {
+        try {
+          abortController = new AbortController()
+          const timeoutId = setTimeout(() => abortController?.abort(), 10000)
+          
+          const response = await fetch(getFileUrl(file.file_id), {
+            headers: { 
+              'X-API-KEY': apiKey || '',
+              'Accept': 'image/*'
+            },
+            mode: 'cors',
+            credentials: 'omit',
+            signal: abortController.signal
+          })
+          
+          clearTimeout(timeoutId)
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+          }
+          
+          const blob = await response.blob()
+          if (blob.size === 0) {
+            throw new Error('图片文件为空')
+          }
+          
+          urlKey = `image-preview-${file.file_id}-${Date.now()}`
+          const url = SafeBlobManager.createObjectURL(blob, urlKey)
           setImageBlobUrl(url)
-          revokeUrl = url
-        })
-        .catch(() => {
-          setImageLoadError(true)
-        })
-        .finally(() => {
+        } catch (error) {
+          if ((error as Error)?.name !== 'AbortError') {
+            console.warn(`图片 ${file.filename} 获取失败:`, error)
+            setImageLoadError(true)
+          }
+        } finally {
           setImageLoading(false)
           setFetchingImage(false)
-        })
+        }
+      }
+      
+      fetchImage()
+      
       return () => {
-        if (revokeUrl) URL.revokeObjectURL(revokeUrl)
+        if (abortController) {
+          abortController.abort()
+        }
+        if (urlKey) {
+          SafeBlobManager.revokeObjectURL(urlKey)
+        }
       }
     } else {
       setImageBlobUrl(null)
@@ -843,24 +1136,51 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
   // 新增：文本文件内容加载
   useEffect(() => {
     if (isOpen && file && isTextFile(file.filename)) {
+      let abortController: AbortController | null = null
+      
       setLoadingText(true)
       setTextError(false)
-      fetch(getFileUrl(file.file_id), {
-        headers: { 'X-API-KEY': apiKey || '' }
-      })
-        .then(res => {
-          if (!res.ok) throw new Error('文件獲取失敗')
-          return res.text()
-        })
-        .then(text => {
+      
+      const fetchText = async () => {
+        try {
+          abortController = new AbortController()
+          const timeoutId = setTimeout(() => abortController?.abort(), 10000)
+          
+          const response = await fetch(getFileUrl(file.file_id), {
+            headers: { 
+              'X-API-KEY': apiKey || '',
+              'Accept': 'text/*'
+            },
+            mode: 'cors',
+            credentials: 'omit',
+            signal: abortController.signal
+          })
+          
+          clearTimeout(timeoutId)
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+          }
+          
+          const text = await response.text()
           setTextContent(text)
-        })
-        .catch(() => {
-          setTextError(true)
-        })
-        .finally(() => {
+        } catch (error) {
+          if ((error as Error)?.name !== 'AbortError') {
+            console.warn(`文本文件 ${file.filename} 获取失败:`, error)
+            setTextError(true)
+          }
+        } finally {
           setLoadingText(false)
-        })
+        }
+      }
+      
+      fetchText()
+      
+      return () => {
+        if (abortController) {
+          abortController.abort()
+        }
+      }
     } else {
       setTextContent('')
     }
@@ -869,56 +1189,128 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
   // 新增：媒体文件 blob URL 获取
   useEffect(() => {
     if (isOpen && file && (isVideoFile(file.filename) || isAudioFile(file.filename))) {
-      let revokeUrl: string | null = null
+      let urlKey: string | null = null
+      let abortController: AbortController | null = null
+      
       setLoadingMedia(true)
       setMediaError(false)
       
-      getAuthenticatedFileUrl(file.file_id)
-        .then(url => {
+      const fetchMedia = async () => {
+        try {
+          abortController = new AbortController()
+          const timeoutId = setTimeout(() => abortController?.abort(), 30000) // 媒体文件可能较大，15秒超时
+          
+          const response = await fetch(`${apiBaseUrl}/files/${file.file_id}`, {
+            headers: { 
+              'X-API-KEY': apiKey || '',
+              'Accept': isVideoFile(file.filename) ? 'video/*' : 'audio/*'
+            },
+            mode: 'cors',
+            credentials: 'omit',
+            signal: abortController.signal
+          })
+          
+          clearTimeout(timeoutId)
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+          }
+          
+          const blob = await response.blob()
+          if (blob.size === 0) {
+            throw new Error('媒体文件为空')
+          }
+          
+          urlKey = `media-preview-${file.file_id}-${Date.now()}`
+          const url = SafeBlobManager.createObjectURL(blob, urlKey)
           setMediaBlobUrl(url)
-          revokeUrl = url
-        })
-        .catch(() => {
-          setMediaError(true)
-        })
-        .finally(() => {
+        } catch (error) {
+          if ((error as Error)?.name !== 'AbortError') {
+            console.warn(`媒体文件 ${file.filename} 获取失败:`, error)
+            setMediaError(true)
+          }
+        } finally {
           setLoadingMedia(false)
-        })
+        }
+      }
+      
+      fetchMedia()
       
       return () => {
-        if (revokeUrl) URL.revokeObjectURL(revokeUrl)
+        if (abortController) {
+          abortController.abort()
+        }
+        if (urlKey) {
+          SafeBlobManager.revokeObjectURL(urlKey)
+        }
       }
     } else {
       setMediaBlobUrl(null)
     }
-  }, [isOpen, file, getAuthenticatedFileUrl])
+  }, [isOpen, file, apiBaseUrl, apiKey])
 
   // 新增：PDF 文件 blob URL 获取
   useEffect(() => {
     if (isOpen && file && isPdfFile(file.filename)) {
-      let revokeUrl: string | null = null
+      let urlKey: string | null = null
+      let abortController: AbortController | null = null
+      
       setLoadingPdf(true)
       setPdfError(false)
       
-      getAuthenticatedFileUrl(file.file_id)
-        .then(url => {
+      const fetchPdf = async () => {
+        try {
+          abortController = new AbortController()
+          const timeoutId = setTimeout(() => abortController?.abort(), 20000) // PDF 可能较大，20秒超时
+          
+          const response = await fetch(`${apiBaseUrl}/files/${file.file_id}`, {
+            headers: { 
+              'X-API-KEY': apiKey || '',
+              'Accept': 'application/pdf'
+            },
+            mode: 'cors',
+            credentials: 'omit',
+            signal: abortController.signal
+          })
+          
+          clearTimeout(timeoutId)
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+          }
+          
+          const blob = await response.blob()
+          if (blob.size === 0) {
+            throw new Error('PDF 文件为空')
+          }
+          
+          urlKey = `pdf-preview-${file.file_id}-${Date.now()}`
+          const url = SafeBlobManager.createObjectURL(blob, urlKey)
           setPdfBlobUrl(url)
-          revokeUrl = url
-        })
-        .catch(() => {
-          setPdfError(true)
-        })
-        .finally(() => {
+        } catch (error) {
+          if ((error as Error)?.name !== 'AbortError') {
+            console.warn(`PDF 文件 ${file.filename} 获取失败:`, error)
+            setPdfError(true)
+          }
+        } finally {
           setLoadingPdf(false)
-        })
+        }
+      }
+      
+      fetchPdf()
       
       return () => {
-        if (revokeUrl) URL.revokeObjectURL(revokeUrl)
+        if (abortController) {
+          abortController.abort()
+        }
+        if (urlKey) {
+          SafeBlobManager.revokeObjectURL(urlKey)
+        }
       }
     } else {
       setPdfBlobUrl(null)
     }
-  }, [isOpen, file, getAuthenticatedFileUrl])
+  }, [isOpen, file, apiBaseUrl, apiKey])
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (!isOpen || !file) return
@@ -1012,6 +1404,25 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
       }
     }
   }, [isOpen, handleKeyDown])
+
+  // 組件卸載時清理所有 blob URL
+  useEffect(() => {
+    return () => {
+      // 當組件卸載時，清理相關的 blob URL
+      if (file) {
+        const patterns = [
+          `image-preview-${file.file_id}`,
+          `media-preview-${file.file_id}`,
+          `pdf-preview-${file.file_id}`,
+          `file-${file.file_id}`
+        ]
+        
+        patterns.forEach(pattern => {
+          SafeBlobManager.revokeByPattern(pattern)
+        })
+      }
+    }
+  }, [file?.file_id])
 
   if (!file || !isOpen) return null
 
@@ -1608,6 +2019,14 @@ export const FileManager = ({
   const [showPreview, setShowPreview] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // 組件卸載時清理所有 blob URL
+  useEffect(() => {
+    return () => {
+      // 清理所有創建的 blob URL，防止內存泄漏
+      SafeBlobManager.revokeAll()
+    }
+  }, [])
+
   // 计算统计信息的工具函数
   const calculateStats = (fileList: FileItem[]): FileStats => {
     const totalSize = fileList.reduce((sum, file) => sum + (file.file_size || 0), 0)
@@ -1633,7 +2052,12 @@ export const FileManager = ({
     setLoading(true)
     try {
       const response = await fetch(`${apiBaseUrl}/files?page_size=1000`, {
-        headers: { 'X-API-KEY': apiKey }
+        headers: { 
+              'X-API-KEY': apiKey,
+              'Accept': '*/*'
+            },
+            mode: 'cors', // 明确指定 CORS 模式
+            credentials: 'omit', // 不发送 cookies
       })
       if (response.ok) {
         const fileList = await response.json()
@@ -1672,7 +2096,12 @@ export const FileManager = ({
 
         const response = await fetch(`${apiBaseUrl}/files/upload`, {
           method: 'POST',
-          headers: { 'X-API-KEY': apiKey },
+          headers: { 
+              'X-API-KEY': apiKey,
+              'Accept': '*/*'
+            },
+            mode: 'cors', // 明确指定 CORS 模式
+            credentials: 'omit', // 不发送 cookies
           body: formData
         })
 
@@ -1701,7 +2130,12 @@ export const FileManager = ({
     try {
       const response = await fetch(`${apiBaseUrl}/files/${fileId}`, {
         method: 'DELETE',
-        headers: { 'X-API-KEY': apiKey }
+        headers: { 
+              'X-API-KEY': apiKey,
+              'Accept': '*/*'
+            },
+            mode: 'cors', // 明确指定 CORS 模式
+            credentials: 'omit', // 不发送 cookies
       })
       
       if (response.ok) {
@@ -1730,7 +2164,12 @@ export const FileManager = ({
       for (const fileId of selectedFiles) {
         const response = await fetch(`${apiBaseUrl}/files/${fileId}`, {
           method: 'DELETE',
-          headers: { 'X-API-KEY': apiKey }
+          headers: { 
+              'X-API-KEY': apiKey,
+              'Accept': '*/*'
+            },
+            mode: 'cors', // 明确指定 CORS 模式
+            credentials: 'omit', // 不发送 cookies
         })
         
         if (response.ok) {
@@ -1750,7 +2189,12 @@ export const FileManager = ({
   const downloadFile = async (fileId: string, filename: string) => {
     try {
       const response = await fetch(`${apiBaseUrl}/files/${fileId}`, {
-        headers: { 'X-API-KEY': apiKey }
+        headers: { 
+              'X-API-KEY': apiKey,
+              'Accept': '*/*'
+            },
+            mode: 'cors', // 明确指定 CORS 模式
+            credentials: 'omit', // 不发送 cookies
       })
       
       if (response.ok) {
@@ -2162,26 +2606,74 @@ const FileGrid = ({
   // 當組件掛載時，為圖片和視頻檔案生成縮圖
   useEffect(() => {
     const generateThumbnailsForVisibleFiles = async () => {
-      for (const file of files.slice(0, 20)) { // 只為前20個檔案生成縮圖以優化性能
-        if (isImageFile(file.filename) || isVideoFile(file.filename) || file.filename.toLowerCase().endsWith('.pdf')) {
-          try {
-            // 獲取檔案並生成縮圖
-            const response = await fetch(`${apiBaseUrl}/files/${file.file_id}`, {
-              headers: { 'X-API-KEY': apiKey }
-            })
-            if (response.ok) {
-              const blob = await response.blob()
-              await generateThumbnail(file, blob)
+      if (!apiBaseUrl || !apiKey || files.length === 0) {
+        return
+      }
+      
+      // 筛选需要生成缩图的文件，限制数量避免性能问题
+      const eligibleFiles = files
+        .filter(file => 
+          isImageFile(file.filename) || 
+          isVideoFile(file.filename) || 
+          file.filename.toLowerCase().endsWith('.pdf')
+        )
+        .slice(0, 10) // 只为前10个文件生成缩图
+      
+      // 使用队列方式处理，避免并发过多请求
+      const batchSize = 2 // 每次最多处理2个文件
+      for (let i = 0; i < eligibleFiles.length; i += batchSize) {
+        const batch = eligibleFiles.slice(i, i + batchSize)
+        
+        // 并发处理当前批次
+        await Promise.allSettled(
+          batch.map(async (file) => {
+            try {
+              // 检查是否已经有缩图或正在处理
+              if (getThumbnail(file.file_id) || isThumbnailLoading(file.file_id)) {
+                return
+              }
+              
+              const controller = new AbortController()
+              const timeoutId = setTimeout(() => controller.abort(), 8000)
+              
+              const response = await fetch(`${apiBaseUrl}/files/${file.file_id}`, {
+                headers: { 
+                  'X-API-KEY': apiKey,
+                  'Accept': '*/*'
+                },
+                mode: 'cors',
+                credentials: 'omit',
+                signal: controller.signal
+              })
+              
+              clearTimeout(timeoutId)
+              
+              if (response.ok) {
+                const blob = await response.blob()
+                if (blob.size > 0) {
+                  await generateThumbnail(file, blob)
+                }
+              }
+            } catch (error) {
+              // 静默处理错误，避免控制台噪音
+              if ((error as Error)?.name !== 'AbortError') {
+                console.debug(`文件 ${file.filename} 缩图生成跳过:`, (error as Error)?.message)
+              }
             }
-          } catch (error) {
-            console.error('生成縮圖失敗:', error)
-          }
+          })
+        )
+        
+        // 在批次之间添加小延迟，避免过度占用资源
+        if (i + batchSize < eligibleFiles.length) {
+          await new Promise(resolve => setTimeout(resolve, 100))
         }
       }
     }
     
-    generateThumbnailsForVisibleFiles()
-  }, [files, apiBaseUrl, apiKey, generateThumbnail])
+    // 延迟执行，避免组件初始化时的性能影响
+    const timeoutId = setTimeout(generateThumbnailsForVisibleFiles, 500)
+    return () => clearTimeout(timeoutId)
+  }, [files, apiBaseUrl, apiKey, generateThumbnail, getThumbnail, isThumbnailLoading])
 
   const toggleSelection = (fileId: string) => {
     const newSelection = new Set(selectedFiles)

@@ -121,8 +121,8 @@ class PromptTemplates:
             Always format your responses using Markdown for clarity:
             - Use `# ## ###` for clear section headings
             - Use `**bold**` and `*italic*` for emphasis
-            - Use `\`code\`` for technical terms, commands, or variables
-            - Use `\`\`\`code blocks\`\`\`` for multi-line code or detailed examples
+            - Use `code` for technical terms, commands, or variables
+            - Use ```code blocks``` for multi-line code or detailed examples
             - Use `- 1.` for structured lists and steps
             - Use `>` for important notes, warnings, or key insights
             - Use `| tables |` when presenting structured data
@@ -176,8 +176,8 @@ class PromptTemplates:
             Always format your responses using Markdown for clarity:
             - Use `# ## ###` for clear section headings
             - Use `**bold**` and `*italic*` for emphasis
-            - Use `\`code\`` for technical terms, commands, or variables
-            - Use `\`\`\`code blocks\`\`\`` for multi-line code or detailed examples
+            - Use `code` for technical terms, commands, or variables
+            - Use ```code blocks``` for multi-line code or detailed examples
             - Use `- 1.` for structured lists and steps
             - Use `>` for important notes, warnings, or key insights
             - Use `| tables |` when presenting structured data
@@ -258,8 +258,8 @@ class PromptTemplates:
             Always format your responses using Markdown for clarity:
             - Use `# ## ###` for clear section headings
             - Use `**bold**` and `*italic*` for emphasis
-            - Use `\`code\`` for technical terms, commands, or variables
-            - Use `\`\`\`code blocks\`\`\`` for multi-line code or detailed examples
+            - Use `code` for technical terms, commands, or variables
+            - Use ```code blocks``` for multi-line code or detailed examples
             - Use `- 1.` for structured lists and steps
             - Use `>` for important notes, warnings, or key insights
             - Use `| tables |` when presenting structured data
@@ -398,8 +398,8 @@ class PromptTemplates:
             Always format your responses using Markdown for clarity:
             - Use `# ## ###` for clear section headings
             - Use `**bold**` and `*italic*` for emphasis
-            - Use `\`code\`` for technical terms, commands, or variables
-            - Use `\`\`\`code blocks\`\`\`` for multi-line code or detailed examples
+            - Use `code` for technical terms, commands, or variables
+            - Use ```code blocks``` for multi-line code or detailed examples
             - Use `- 1.` for structured lists and steps
             - Use `>` for important notes, warnings, or key insights
             - Use `| tables |` when presenting structured data
@@ -954,7 +954,7 @@ class Settings(BaseSettings):
       # MCP协议配置
     MCP_VERSION: str = "0.1.0"  # MCP协议版本
     MCP_MAX_CONTEXT_TOKENS: int = 16000  # MCP最大上下文长度
-    MCP_SUPPORTED_MODELS: list = ["gpt-4o", "gpt-4o-mini", "o1", "DeepSeek-V3-0324", "gpt-4.1-mini", "gemini-1.5-pro", "Cohere-command-r-plus-08-2024", "Mistral-Nemo", "Mistral-Large-2411", "gemini-2.0-flash", "gemini-2.5-flash-preview-05-20", "qwen3:8b", "mistralai/mistral-small-3.2-24b-instruct-2506:free", "minimax/minimax-m1:extended", "deepseek/deepseek-chat-v3-0324:free", "mistralai/mistral-small-3.1-24b-instruct:free"]# 支持MCP的模型列表
+    MCP_SUPPORTED_MODELS: list = ["gpt-4o", "gpt-4o-mini", "o1", "DeepSeek-V3-0324", "gpt-4.1-mini", "gemini-1.5-pro", "gemini-2.5-pro", "Cohere-command-r-plus-08-2024", "Mistral-Nemo", "Mistral-Large-2411", "gemini-2.0-flash", "gemini-2.5-flash-preview-05-20", "qwen3:8b", "qwen3:30b-a3b", "mistralai/mistral-small-3.2-24b-instruct-2506:free", "minimax/minimax-m1:extended", "deepseek/deepseek-chat-v3-0324:free", "mistralai/mistral-small-3.1-24b-instruct:free"]# 支持MCP的模型列表
     MCP_SUPPORT_ENABLED: bool = True  # 是否启用MCP协议支持
     
     # 数据库配置
@@ -976,7 +976,7 @@ class Settings(BaseSettings):
     # Ollama API配置
     OLLAMA_ENDPOINT: str = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
     OLLAMA_API_KEY: str = os.getenv("OLLAMA_API_KEY", "")  # Ollama 通常不需要 API Key，但留作扩展
-    OLLAMA_DEFAULT_MODEL: str = os.getenv("OLLAMA_DEFAULT_MODEL", "qwen2.5:7b")
+    OLLAMA_DEFAULT_MODEL: str = os.getenv("OLLAMA_DEFAULT_MODEL", "qwen3:8b")
     
     # NVIDIA NIM API配置
     NVIDIA_NIM_ENDPOINT: str = os.getenv("NVIDIA_NIM_ENDPOINT", "https://integrate.api.nvidia.com/v1/chat/completions")
@@ -1023,6 +1023,7 @@ class Settings(BaseSettings):
     ]
       # Gemini模型列表
     ALLOWED_GEMINI_MODELS: list = [
+        "gemini-2.5-pro",
         "gemini-2.5-flash-preview-05-20",
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
@@ -1036,7 +1037,8 @@ class Settings(BaseSettings):
     # Ollama模型列表
     ALLOWED_OLLAMA_MODELS: list = [
         # Qwen系列
-        "qwen3:8b"
+        "qwen3:8b",
+        "qwen3:30b-a3b"
     ]
     
     # NVIDIA NIM模型列表
@@ -1156,6 +1158,7 @@ class Settings(BaseSettings):
         "Phi-4-reasoning": Low,
 
         # Gemini
+        "gemini-2.5-pro": 100,  # Gemini 2.5 Pro
         "gemini-2.5-flash-preview-05-20": 250,
         "gemini-2.0-flash": 750,
         "gemini-2.0-flash-lite": 750,
@@ -1166,7 +1169,8 @@ class Settings(BaseSettings):
 
         # Ollama
         "qwen3:8b": Infinity,
-        
+        "qwen3:30b-a3b": Infinity,
+
         # NVIDIA NIM
         "google/gemma-3-27b-it": Infinity,
         "google/gemma-2-27b-it": Infinity,

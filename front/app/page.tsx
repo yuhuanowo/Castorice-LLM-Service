@@ -27,6 +27,7 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+  sessionId?: string  // 添加 sessionId 字段
   // Agent 模式增强字段
   execution_trace?: Array<{
     step: number
@@ -308,13 +309,84 @@ const getProviderDisplayName = (provider: string) => {
 
 
 export default function ModernChatGPT() {
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<Message[]>(() => {
+    // 尝试恢复最后一条用户消息（如果页面刷新时有未完成的对话）
+    if (typeof window !== 'undefined') {
+      try {
+        const savedMessage = localStorage.getItem('lastUserMessage');
+        const loadingSessionId = localStorage.getItem('chatLoadingSessionId');
+        const isLoading = localStorage.getItem('chatLoadingState') === 'true';
+        
+        if (savedMessage && loadingSessionId && isLoading) {
+          const userMsg = JSON.parse(savedMessage);
+          console.log('🔄 Initializing messages with saved user message:', userMsg.content.substring(0, 30) + '...');
+          return [userMsg];
+        }
+      } catch (err) {
+        console.warn('⚠️ Error restoring saved user message on init:', err);
+      }
+    }
+    return [];
+  })
   const [input, setInput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
+  
+  // 加载状态从localStorage初始化 - 解决页面刷新时状态丢失问题
+  const [isLoading, setIsLoading] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const savedLoadingState = localStorage.getItem('chatLoadingState')
+      return savedLoadingState === 'true'
+    }
+    return false
+  })
+  
+  // 跟踪哪个会话正在加载 - 也从localStorage恢复
+  const [loadingSessionId, setLoadingSessionId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('chatLoadingSessionId')
+    }
+    return null
+  })
+  
+  // 记录当前正在使用的模型 - 用于"正在使用模型:xxx"的提示
+  const [currentLoadingModel, setCurrentLoadingModel] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('currentLoadingModel') || ''
+    }
+    return ''
+  })
+  
   const [selectedModel, setSelectedModel] = useState('gpt-4o-mini')
   const [models, setModels] = useState<Model[]>([])
   const [chatHistory, setChatHistory] = useState<ChatHistory[]>([])
-  const [currentChatId, setCurrentChatId] = useState<string>('')
+  // 从localStorage恢复当前会话ID
+  const [currentChatId, setCurrentChatId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      // 如果有正在加载的会话，优先恢复那个会话ID
+      const loadingId = localStorage.getItem('chatLoadingSessionId')
+      if (loadingId) {
+        console.log('🔄 Restoring loading session ID from localStorage:', loadingId)
+        
+        // 同时尝试恢复最后的用户消息到初始messages状态
+        try {
+          const savedUserMessage = localStorage.getItem('lastUserMessage');
+          if (savedUserMessage) {
+            console.log('🔄 Found saved user message, will restore with session');
+          }
+        } catch (err) {
+          console.warn('⚠️ Error checking for saved user message:', err);
+        }
+        
+        return loadingId
+      }
+      // 否则尝试恢复最后一次活跃的会话ID
+      const lastActiveId = localStorage.getItem('lastActiveChatId')
+      if (lastActiveId) {
+        console.log('🔄 Restoring last active session ID:', lastActiveId)
+        return lastActiveId
+      }
+    }
+    return ''
+  })
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
@@ -360,12 +432,23 @@ export default function ModernChatGPT() {
   const [showModelInfo, setShowModelInfo] = useState(true)
   const [showPerformanceMetrics, setShowPerformanceMetrics] = useState(false)
     // Agent模式的实时状态追踪
+  // 定义React推理步骤类型
+  type ReactStep = {
+    type: 'thought' | 'decision' | 'reflection' | 'action' | 'observation'
+    label: string
+    complete: boolean
+    enabled?: boolean
+  }
+
   const [agentStatus, setAgentStatus] = useState<{[messageId: string]: {
     currentStep?: string
     totalSteps?: number
     isReflecting?: boolean
     toolsInUse?: string[]
     memoryActive?: boolean
+    reactPhase?: string
+    reactSteps?: ReactStep[]
+    currentReactStep?: number
   }}>({})
   
   // LLM服务调用统计
@@ -471,7 +554,116 @@ export default function ModernChatGPT() {
     loadUserSessionsFromAPI().catch(err => 
       console.warn('⚠️ Failed to load sessions from server:', err)
     )
-  }, [])  // Reset current chat ID if no sessions exist (show empty state)
+  }, [])
+  
+  // 页面刷新后自动恢复加载中的会话
+  useEffect(() => {
+    const handlePageRefresh = async () => {
+      // 检查是否存在加载中的会话和当前会话ID
+      const loadingId = localStorage.getItem('chatLoadingSessionId')
+      const isPageRefresh = localStorage.getItem('isPageRefresh') !== 'false'
+      const wasLoading = localStorage.getItem('chatLoadingState') === 'true'
+      const savedUserMessage = localStorage.getItem('lastUserMessage')
+      
+      console.log('🔄 Page refresh check:', { 
+        loadingId, 
+        currentChatId, 
+        wasLoading, 
+        isPageRefresh,
+        hasSavedUserMessage: !!savedUserMessage
+      })
+      
+      // 标记这不是页面刷新
+      localStorage.setItem('isPageRefresh', 'false')
+      
+      // 如果当前有会话ID且之前有加载状态，需要恢复会话
+      if (currentChatId && wasLoading && loadingId === currentChatId && isPageRefresh) {
+        console.log('🔄 Auto-restoring session after page refresh:', currentChatId)
+        
+        // 等待聊天历史加载完成
+        let retries = 0
+        while (chatHistory.length === 0 && retries < 5) {
+          console.log('⏳ Waiting for chat history to load...')
+          await new Promise(resolve => setTimeout(resolve, 200))
+          retries++
+        }
+        
+        // 找到相应的会话
+        let chat = chatHistory.find(c => c.id === currentChatId)
+        
+        // 如果有保存的用户消息，检查是否需要将其添加到会话
+        if (chat && savedUserMessage) {
+          try {
+            const userMsg = JSON.parse(savedUserMessage);
+            
+            // 确保这条消息属于当前会话
+            if (!userMsg.sessionId || userMsg.sessionId === currentChatId) {
+              // 检查这条消息是否已经在会话中
+              const messageExists = chat.messages.some(m => 
+                m.id === userMsg.id || 
+                (m.content === userMsg.content && m.role === 'user')
+              );
+              
+              // 如果消息不在会话中，添加它
+              if (!messageExists) {
+                console.log('🔄 Adding saved user message to chat history before restoring');
+                // 创建更新的会话副本
+                chat = {
+                  ...chat,
+                  messages: [...chat.messages, {...userMsg, sessionId: currentChatId}]
+                };
+              }
+            }
+          } catch (err) {
+            console.warn('⚠️ Error processing saved user message:', err);
+          }
+        }
+        
+        if (chat) {
+          console.log('✅ Found session to restore:', chat.id, 'with', chat.messages.length, 'messages');
+          
+          // 在恢复会话状态前，先检查服务器是否已经响应
+          const hasServerResponded = await checkSessionResponseStatus(currentChatId);
+          
+          if (hasServerResponded) {
+            console.log('⚠️ Server has already responded while user was away, loading fresh session');
+            // 清除加载状态
+            localStorage.removeItem('chatLoadingState');
+            localStorage.removeItem('chatLoadingSessionId');
+            localStorage.removeItem('currentLoadingModel');
+            localStorage.removeItem('lastUserMessage');
+            
+            setIsLoading(false);
+            setLoadingSessionId(null);
+            setCurrentLoadingModel('');
+            
+            // 加载最新的会话内容
+            await loadChatSessions();
+            // 重新加载会话，但不保持加载状态
+            await loadChat(chat, { isPageRefresh: false });
+            
+            toast.info('会话已完成响应，已加载最新内容');
+          } else {
+            // 恢复会话内容，标记为页面刷新
+            await loadChat(chat, { isPageRefresh: true });
+            
+            // 显示提示，告知用户会话已恢复
+            if (localStorage.getItem('chatLoadingState') === 'true') {
+              toast.info('已恢复正在等待响应的会话');
+            }
+          }
+        } else {
+          console.log('⚠️ Could not find session to restore:', currentChatId);
+        }
+      }
+    }
+    
+    // 标记这是页面刷新
+    localStorage.setItem('isPageRefresh', 'true')
+    
+    // 在组件挂载时检查是否需要恢复会话
+    handlePageRefresh()
+  }, [chatHistory.length, currentChatId])  // Reset current chat ID if no sessions exist (show empty state)
   useEffect(() => {
     // 如果没有任何会话，清空当前会话ID以显示空白状态
     if (chatHistory.length === 0 && currentChatId) {
@@ -486,6 +678,95 @@ export default function ModernChatGPT() {
       localStorage.setItem('chatHistory', JSON.stringify(chatHistory))
     }
   }, [chatHistory])
+  
+  // 持久化存储加载状态 - 页面刷新后可恢复
+  useEffect(() => {
+    console.log('💾 Persisting loading state:', { isLoading, loadingSessionId, currentLoadingModel })
+    localStorage.setItem('chatLoadingState', isLoading.toString())
+    
+    if (loadingSessionId) {
+      localStorage.setItem('chatLoadingSessionId', loadingSessionId)
+    } else {
+      localStorage.removeItem('chatLoadingSessionId')
+    }
+    
+    if (currentLoadingModel) {
+      localStorage.setItem('currentLoadingModel', currentLoadingModel)
+    } else {
+      localStorage.removeItem('currentLoadingModel')
+    }
+    
+    // 如果正在加载且有会话ID，保存最后一条用户消息
+    if (isLoading && loadingSessionId) {
+      const lastUserMessage = messages.filter(msg => msg.role === 'user' && 
+        (!msg.sessionId || msg.sessionId === loadingSessionId)).pop();
+      
+      if (lastUserMessage) {
+        localStorage.setItem('lastUserMessage', JSON.stringify(lastUserMessage));
+        console.log('💾 Saved last user message:', lastUserMessage.content.substring(0, 50) + '...');
+      }
+    } else if (!isLoading) {
+      // 如果不再加载，清除保存的消息
+      localStorage.removeItem('lastUserMessage');
+    }
+  }, [isLoading, loadingSessionId, currentLoadingModel, messages])
+  
+  // 定期检查等待中的会话是否已收到响应
+  useEffect(() => {
+    // 只有当有会话正在加载时才设置定时器
+    if (isLoading && loadingSessionId) {
+      console.log('🔄 Setting up periodic check for session response:', loadingSessionId);
+      
+      // 创建定时器，每5秒检查一次
+      const checkInterval = setInterval(async () => {
+        // 检查会话是否已经收到响应
+        const hasResponded = await checkSessionResponseStatus(loadingSessionId);
+        
+        if (hasResponded) {
+          console.log('✅ Server has responded to session during background check');
+          
+          // 清除加载状态
+          setIsLoading(false);
+          setLoadingSessionId(null);
+          setCurrentLoadingModel('');
+          
+          // 清除localStorage中的状态
+          localStorage.removeItem('chatLoadingState');
+          localStorage.removeItem('chatLoadingSessionId');
+          localStorage.removeItem('currentLoadingModel');
+          localStorage.removeItem('lastUserMessage');
+          
+          // 刷新会话内容
+          try {
+            // 重新加载当前会话的消息
+            const freshData = await loadSessionDetailWithoutStateUpdate(loadingSessionId, false);
+            if (freshData.success && freshData.messages) {
+              setMessages(freshData.messages);
+              toast.success('收到服务器响应，已更新内容');
+            }
+          } catch (refreshError) {
+            console.warn('⚠️ Failed to refresh messages after response detected:', refreshError);
+          }
+          
+          // 清除定时器
+          clearInterval(checkInterval);
+        }
+      }, 5000); // 每5秒检查一次
+      
+      // 清理函数
+      return () => {
+        clearInterval(checkInterval);
+      };
+    }
+  }, [isLoading, loadingSessionId]);
+  
+  // 持久化存储当前活跃的会话ID
+  useEffect(() => {
+    if (currentChatId) {
+      localStorage.setItem('lastActiveChatId', currentChatId)
+      console.log('💾 Persisting current chat ID:', currentChatId)
+    }
+  }, [currentChatId])
     // 追踪是否是加载历史对话的状态
   const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   // 使用 ref 追踪最后加载的历史聊天 ID，避免触发 useEffect
@@ -493,17 +774,29 @@ export default function ModernChatGPT() {
   useEffect(() => {
     // 如果当前聊天是刚加载的历史聊天，跳过时间戳更新
     if (currentChatId && currentChatId === lastLoadedHistoryChatId.current) {
+      console.log('⏭️ Skipping history update - loading historical chat:', currentChatId)
       return
     }
     
     if (currentChatId && messages.length > 0 && !isLoadingHistory) {
-      setChatHistory(prev => 
-        prev.map(chat => 
+      console.log('📝 Updating chat history for session:', currentChatId, 'with', messages.length, 'messages')
+      console.log('📋 Messages:', messages.map(m => ({ id: m.id, role: m.role, content: m.content.substring(0, 50) + '...' })))
+      
+      setChatHistory(prev => {
+        const updated = prev.map(chat => 
           chat.id === currentChatId 
-            ? { ...chat, messages: messages, timestamp: new Date().toISOString() }
+            ? { ...chat, messages: messages.filter(m => !m.sessionId || m.sessionId === currentChatId), timestamp: new Date().toISOString() }
             : chat
         )
-      )
+        console.log('� ChatHistory updated for session:', currentChatId)
+        return updated
+      })
+    } else {
+      console.log('⚠️ Skipping history update:', { 
+        currentChatId: !!currentChatId, 
+        messagesLength: messages.length, 
+        isLoadingHistory 
+      })
     }
   }, [messages, currentChatId, isLoadingHistory])
   const fetchModels = async () => {
@@ -628,27 +921,176 @@ export default function ModernChatGPT() {
     setCurrentChatId('')
     lastLoadedHistoryChatId.current = null // 清除加载聊天ID标志
     
+    // 确保所有加载状态都被重置
+    setIsLoading(false)
+    setLoadingSessionId(null)
+    setIsLoadingHistory(false)
+    
     toast.success('准备开始新对话')
   }
-  const loadChat = async (chat: ChatHistory) => {
-    // 设置当前会话ID
-    setCurrentChatId(chat.id)
+  const loadChat = async (chat: ChatHistory, options: { isPageRefresh?: boolean } = {}) => {
+    const isPageRefresh = options.isPageRefresh || false
     
-    // 设置加载历史对话标志和记录加载的聊天ID
+    console.log('🔄 Loading chat session:', chat.id, 'with', chat.messages.length, 'messages', isPageRefresh ? '(page refresh)' : '')
+    
+    // 检查是否是之前正在加载的会话
+    const wasLoadingThisSession = 
+      localStorage.getItem('chatLoadingSessionId') === chat.id && 
+      localStorage.getItem('chatLoadingState') === 'true'
+    
+    console.log('🔍 Session loading state check:', {
+      wasLoadingThisSession,
+      'chatLoadingSessionId': localStorage.getItem('chatLoadingSessionId'),
+      'chatLoadingState': localStorage.getItem('chatLoadingState')
+    })
+    
+    // 先设置加载历史对话标志和记录加载的聊天ID
     setIsLoadingHistory(true)
-    lastLoadedHistoryChatId.current = chat.id// 优先尝试从服务器加载最新数据
+    lastLoadedHistoryChatId.current = chat.id
+    
+    // 重要：先准备好数据，再一次性更新状态，减少闪烁
+    let sessionMessages: Message[] = []
+
+    // 优先尝试从服务器加载最新数据
     try {
-      await loadSessionDetail(chat.id, true)
-      console.log('✅ Session loaded from server')
+      // 尝试加载详细信息但不直接设置消息，而是返回消息数组和加载状态
+      const { success, messages: serverMessages, wasLoading, loadingModel } = 
+        await loadSessionDetailWithoutStateUpdate(chat.id, true)
+      
+      if (success && serverMessages) {
+        console.log('✅ Session loaded from server successfully')
+        sessionMessages = serverMessages
+        
+        // 如果这是一个正在加载的会话，更新加载状态
+        if (wasLoading) {
+          console.log('⚠️ This session was in loading state, restoring state')
+          
+          // 恢复加载模型信息
+          if (loadingModel) {
+            setCurrentLoadingModel(loadingModel)
+          }
+          
+          // 检查并恢复最后一条用户消息
+          try {
+            const savedUserMessage = localStorage.getItem('lastUserMessage');
+            if (savedUserMessage) {
+              const parsedUserMessage = JSON.parse(savedUserMessage);
+              
+              // 确保这条消息属于当前会话
+              if (!parsedUserMessage.sessionId || parsedUserMessage.sessionId === chat.id) {
+                // 检查这条消息是否已经在会话消息列表中
+                const messageExists = sessionMessages.some(m => 
+                  m.id === parsedUserMessage.id || 
+                  (m.content === parsedUserMessage.content && m.role === 'user')
+                );
+                
+                if (!messageExists) {
+                  console.log('🔄 Restoring last user message that was not in session messages');
+                  sessionMessages = [...sessionMessages, {...parsedUserMessage, sessionId: chat.id}];
+                } else {
+                  console.log('✓ Last user message already exists in session messages');
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('⚠️ Error restoring last user message:', err);
+          }
+        }
+      } else {
+        throw new Error('Failed to load from server')
+      }
     } catch (error) {
       // 如果服务器加载失败，使用本地缓存
       console.warn('⚠️ Failed to load from server, using local cache')
-      setMessages(chat.messages)    }
-      // 重置加载历史对话标志（使用 setTimeout 确保在消息设置后执行）
-    setTimeout(() => {
-      setIsLoadingHistory(false)
-      // 注意：我们不清除 lastLoadedHistoryChatId.current，让它继续保护这个聊天不被更新时间戳
-    }, 100)
+      
+      // 确保每条消息都有会话ID，并且只加载当前会话的消息
+      sessionMessages = chat.messages.map((msg: Message) => ({
+        ...msg,
+        sessionId: chat.id // 确保每条消息都有sessionId
+      })).filter((msg: Message) => !msg.sessionId || msg.sessionId === chat.id);
+      
+      console.log('📋 Prepared messages from local cache:', sessionMessages.length)
+    }
+    
+    // 检查这个会话是否正在等待响应中
+    // 从本地存储和当前状态两处检查
+    const isSessionCurrentlyLoading = loadingSessionId === chat.id || 
+                                    (localStorage.getItem('chatLoadingSessionId') === chat.id && 
+                                     localStorage.getItem('chatLoadingState') === 'true');
+    
+    console.log('🔍 Loading session state check:', {
+      'session': chat.id,
+      'isCurrentlyLoading': isSessionCurrentlyLoading,
+      'loadingSessionId': loadingSessionId,
+      'globalLoadingState': isLoading,
+      'localStorageLoadingId': localStorage.getItem('chatLoadingSessionId'),
+      'localStorageLoading': localStorage.getItem('chatLoadingState')
+    });
+
+    // 一次性更新状态，减少闪烁问题
+    // 设置当前会话ID并同时更新消息
+    setCurrentChatId(chat.id)
+    
+    // 如果有消息则设置，否则不覆盖（可能是正在加载中的会话）
+    if (sessionMessages.length > 0 || !isSessionCurrentlyLoading) {
+      setMessages(sessionMessages)
+    } else {
+      console.log('⚠️ Preserving existing messages for loading session')
+    }
+    
+    // 根据会话实际状态设置加载指示器
+    setIsLoadingHistory(false)
+    
+    // 关键修复：处理会话加载状态
+    if (isSessionCurrentlyLoading) {
+      console.log('⚠️ Restoring loading state for session:', chat.id)
+      
+      // 检查服务器是否已经响应（避免页面刷新时状态不一致）
+      const hasServerResponded = await checkSessionResponseStatus(chat.id);
+      
+      if (hasServerResponded) {
+        console.log('🔄 Server has already responded to this session, clearing loading state');
+        // 清除加载状态
+        localStorage.removeItem('chatLoadingState');
+        localStorage.removeItem('chatLoadingSessionId');
+        localStorage.removeItem('currentLoadingModel');
+        localStorage.removeItem('lastUserMessage');
+        
+        // 不设置加载状态
+        setIsLoading(false);
+        setLoadingSessionId(null);
+        setCurrentLoadingModel('');
+        
+        // 重新加载最新的消息
+        try {
+          const freshData = await loadSessionDetailWithoutStateUpdate(chat.id, false);
+          if (freshData.success && freshData.messages) {
+            setMessages(freshData.messages);
+          }
+        } catch (refreshError) {
+          console.warn('⚠️ Failed to refresh messages after loading state cleared:', refreshError);
+        }
+        
+        toast.info('服务器已经响应此会话，已加载最新内容');
+      } else {
+        // 恢复加载状态
+        setIsLoading(true);
+        setLoadingSessionId(chat.id);
+        
+        // 从localStorage恢复模型信息
+        const savedModel = localStorage.getItem('currentLoadingModel');
+        if (savedModel) {
+          setCurrentLoadingModel(savedModel);
+          console.log('📝 Restored loading model for active session:', savedModel);
+        }
+      }
+    } else {
+      console.log('📋 Session not in loading state, no indicators needed')
+      // 不更改加载状态
+      // 因为可能有另一个会话正在加载中，我们不希望干扰它
+    }
+    
+    console.log('✅ Chat loading completed for session:', chat.id)
   }
   const deleteChat = async (chatId: string) => {
     // 尝试从服务器删除
@@ -676,46 +1118,100 @@ export default function ModernChatGPT() {
       id: Date.now().toString(),
       role: 'user',
       content: input.trim(),
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      sessionId: currentChatId || undefined // 若有现有会话ID，则添加
     }
 
-    setMessages(prev => [...prev, userMessage])
-    setInput('')
-    setIsLoading(true)
-
-    try {
-      // 如果没有当前会话ID，先创建新会话
-      let sessionId = currentChatId
-      let isNewSession = false
+    // 如果没有当前会话ID，立即创建新会话
+    let sessionId = currentChatId
+    let isNewSession = false
+    
+    if (!sessionId) {
+      console.log('🆕 No current session, creating new one...')
+      // 传入用户问题作为初始标题，同时传入用户消息
+      sessionId = await createNewSession(input.trim(), userMessage) 
+      setCurrentChatId(sessionId)
+      isNewSession = true
       
-      if (!sessionId) {
-        console.log('🆕 No current session, creating new one...')
-        sessionId = await createNewSession()
-        setCurrentChatId(sessionId)
-        isNewSession = true
-        
-        // 创建新会话对象并添加到会话历史中
-        const newChatHistory: ChatHistory = {
-          id: sessionId,
-          title: "新对话",
-          messages: [],
-          timestamp: new Date().toISOString()
-        }
-        
-        setChatHistory(prev => [newChatHistory, ...prev])
-        console.log('✅ New session created and added to history:', sessionId)
-      } else {
-        console.log('📝 Using existing session:', sessionId)
+      // 创建新会话对象并添加到会话历史中，使用用户问题作为初始标题
+      const initialTitle = input.trim().length > 50 ? input.trim().substring(0, 50) + '...' : input.trim()
+      
+      // 立即创建包含用户消息的会话，而不是等待useEffect
+      const updatedMessagesForNewSession = [...messages, userMessage]
+      const newChatHistory: ChatHistory = {
+        id: sessionId,
+        title: initialTitle,
+        messages: updatedMessagesForNewSession, // 立即包含用户消息
+        timestamp: new Date().toISOString()
       }
+      
+      setChatHistory(prev => [newChatHistory, ...prev])
+      console.log('✅ New session created with user message included:', sessionId, initialTitle, updatedMessagesForNewSession.length, 'messages')
+      
+      // 同时更新 messages 状态，确保只包含新会话的消息
+      setMessages(updatedMessagesForNewSession.filter(msg => !msg.sessionId || msg.sessionId === sessionId))
+      setInput('')
+      setIsLoading(true)
+      setLoadingSessionId(sessionId) // 设置当前正在加载的会话ID
+      setCurrentLoadingModel(selectedModel) // 保存当前使用的模型名称，用于显示"使用模型:xxx"
+      
+      console.log('🎯 New session setup complete - messages and chatHistory both updated')
+      
+      // 确保消息被同步到服务器端会话
+      try {
+        // 尝试单独发送用户消息到会话（如果创建会话时没有成功添加消息）
+        const syncResponse = await fetch(`${API_BASE_URL}/sessions/test/${sessionId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-KEY': API_KEY,
+            'accept': 'application/json'
+          },
+          body: JSON.stringify({
+            message: {
+              role: userMessage.role,
+              content: userMessage.content,
+              timestamp: userMessage.timestamp
+            }
+          })
+        })
+        
+        if (syncResponse.ok) {
+          console.log('✅ User message explicitly synced to server session:', sessionId)
+        }
+      } catch (syncError) {
+        // 如果同步失败，记录错误但继续进行
+        console.warn('⚠️ Failed to explicitly sync message to server, continuing with local state:', syncError)
+      }
+    } else {
+      console.log('📝 Using existing session:', sessionId)
+      
+      // 更新消息列表 - 对于现有session
+      // 先过滤掉其他会话的消息，然后添加新消息
+      const filteredMessages = messages.filter(msg => !msg.sessionId || msg.sessionId === sessionId)
+      const updatedMessages = [...filteredMessages, {...userMessage, sessionId: sessionId}]
+      setMessages(updatedMessages)
+      setInput('')
+      setIsLoading(true)
+      setLoadingSessionId(sessionId) // 设置当前正在加载的会话ID
+      setCurrentLoadingModel(selectedModel) // 保存当前使用的模型名称，用于显示"使用模型:xxx"
+    }
+    
+    // 获取当前的消息列表用于API请求
+    const currentMessages = [...messages, userMessage]
+    
+    try {
       const endpoint = useAgent 
         ? `/api/agent/`
         : `${API_BASE_URL}/chat/completions`
 
       console.log('🎯 API endpoint:', endpoint)
       console.log('🔧 useAgent state:', useAgent)
+      console.log('📋 Current sessionId:', sessionId)
+      console.log('📝 Messages to send:', currentMessages.length)
       
       // Build request body using enhanced builder with session support
-      const body = await buildRequestBodyWithSession([...messages, userMessage], sessionId)
+      const body = await buildRequestBodyWithSession(currentMessages, sessionId)
 
       // 记录API调用开始时间
       const apiStartTime = performance.now()
@@ -741,42 +1237,271 @@ export default function ModernChatGPT() {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: '正在处理响应...', // 临时内容
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        sessionId: sessionId // 标记消息属于哪个会话
       }
 
-      // 先显示临时消息，避免等待
-      setMessages(prev => [...prev, assistantMessage])
+      // 先显示临时消息，避免等待，但只在当前会话中显示
+      // 使用immutable方式更新消息，确保sessionId标记正确
+      setMessages(prev => {
+        // 首先过滤掉所有其他会话的消息，只保留当前会话的消息或没有sessionId的旧消息
+        const filteredPrev = prev.filter(msg => !msg.sessionId || msg.sessionId === sessionId);
+        // 然后添加新消息
+        return [...filteredPrev, {...assistantMessage, sessionId: sessionId}];
+      })
 
-      // 异步处理响应内容
-      setTimeout(() => {
-        try {
-          const assistantContent = parseApiResponse(data, useAgent)
+      // 存储当前处理的会话ID，用于后续检查
+      const processingSessionId = sessionId
+      
+      // 初始化Agent处理状态 - 采用改进的状态模型
+      if (useAgent) {
+        // 保存每个消息ID对应的时间控制器ID，以便清除
+        const statusTimers: {[key: string]: NodeJS.Timeout[]} = {};
+        
+        // 第一步：分析用户请求
+        setAgentStatus(prev => ({
+          ...prev,
+          [assistantMessage.id]: {
+            currentStep: '分析用户请求...',
+            totalSteps: 1,
+            isReflecting: false,
+            toolsInUse: [],
+            memoryActive: enableMemory
+          }
+        }));
+        
+        const msgId = assistantMessage.id;
+        statusTimers[msgId] = [];
+        
+        // 第二步：检索记忆
+        const timer1 = setTimeout(() => {
+          setAgentStatus(prev => ({
+            ...prev,
+            [msgId]: {
+              ...prev[msgId],
+              currentStep: '检索相关记忆...',
+              totalSteps: 2,
+              memoryActive: enableMemory
+            }
+          }));
+        }, 1500);
+        statusTimers[msgId].push(timer1);
+        
+        // 第三步：准备工具
+        const timer2 = setTimeout(() => {
+          setAgentStatus(prev => ({
+            ...prev,
+            [msgId]: {
+              ...prev[msgId],
+              currentStep: '准备工具...',
+              totalSteps: 3,
+              toolsInUse: enableMcp ? ['search', 'fileSystem', 'codeInterpreter'] : []
+            }
+          }));
+        }, 3000);
+        statusTimers[msgId].push(timer2);
+        
+        // 第四步：React推理循环 - 增加更多细节和子步骤
+        const timer3 = setTimeout(() => {
+          setAgentStatus(prev => ({
+            ...prev,
+            [msgId]: {
+              ...prev[msgId],
+              currentStep: 'React推理循环...',
+              totalSteps: 4,
+              isReflecting: enableReflection,
+              reactPhase: 'thought', // 添加React循环的子阶段
+              currentReactStep: 1, // 当前正在执行的React步骤编号
+              reactSteps: [
+                // 思考步骤
+                { type: 'thought', label: '思考: 分析问题要点', complete: true },
+                { type: 'observation', label: '观察: 收集相关信息', complete: false },
+                { type: 'action', label: '行动: 确定初始方向', complete: false },
+                // 决策步骤
+                { type: 'decision', label: '决策: 确定最佳应对策略', complete: false },
+                // 反思步骤（仅当启用时）
+                { type: 'reflection', label: '反思: 评估解决方案质量', complete: false, enabled: enableReflection },
+                // 行动步骤
+                { type: 'action', label: '行动: 生成最终回复', complete: false }
+              ]
+            }
+          }));
+
+          // 模拟React循环的子步骤过程
+          // 观察阶段
+          setTimeout(() => {
+            setAgentStatus(prev => {
+              if (!prev[msgId]) return prev; // 安全检查
+              return {
+                ...prev,
+                [msgId]: {
+                  ...prev[msgId],
+                  reactPhase: 'observation',
+                  currentReactStep: 2,
+                  reactSteps: prev[msgId].reactSteps?.map((step, idx) => 
+                    idx === 1 ? { ...step, complete: true } : step
+                  ) || []
+                }
+              };
+            });
+          }, 800);
           
-          // 确保 assistantContent 是字符串
-          const finalContent = typeof assistantContent === 'string' 
-            ? assistantContent 
-            : JSON.stringify(assistantContent)
-            // 增强消息数据，添加Agent模式的详细信息
-          const enhancedMessage: Message = {
-            ...assistantMessage,
-            content: finalContent,
-            // 模式增强信息（後端優先，前端fallback）
-            mode: data.mode || (useAgent ? 'agent' : 'llm'),
-            model_used: data.model_used || selectedModel,
-            execution_time: data.execution_time,
-            steps_taken: data.steps_taken,
-            generated_image: data.generated_image || data.image_data_uri,
-            execution_trace: data.execution_trace || [],
-            reasoning_steps: data.reasoning_steps || [],
-            tools_used: data.tools_used || []
+          // 第一个行动阶段
+          setTimeout(() => {
+            setAgentStatus(prev => {
+              if (!prev[msgId]) return prev; // 安全检查
+              return {
+                ...prev,
+                [msgId]: {
+                  ...prev[msgId],
+                  reactPhase: 'action',
+                  currentReactStep: 3,
+                  reactSteps: prev[msgId].reactSteps?.map((step, idx) => 
+                    idx === 2 ? { ...step, complete: true } : step
+                  ) || []
+                }
+              };
+            });
+          }, 1600);
+          
+          // 决策阶段
+          setTimeout(() => {
+            setAgentStatus(prev => {
+              if (!prev[msgId]) return prev; // 安全检查
+              return {
+                ...prev,
+                [msgId]: {
+                  ...prev[msgId],
+                  reactPhase: 'decision',
+                  currentReactStep: 4,
+                  reactSteps: prev[msgId].reactSteps?.map((step, idx) => 
+                    idx === 3 ? { ...step, complete: true } : step
+                  ) || []
+                }
+              };
+            });
+            
+            // 反思阶段 (仅当启用反思时)
+            if (enableReflection) {
+              setTimeout(() => {
+                setAgentStatus(prev => {
+                  if (!prev[msgId]) return prev; // 安全检查
+                  return {
+                    ...prev,
+                    [msgId]: {
+                      ...prev[msgId],
+                      reactPhase: 'reflection',
+                      currentReactStep: 5,
+                      reactSteps: prev[msgId].reactSteps?.map((step, idx) => 
+                        idx === 4 ? { ...step, complete: true } : step
+                      ) || []
+                    }
+                  };
+                });
+              }, 1000);
+            }
+            
+            // 最终行动阶段
+            setTimeout(() => {
+              setAgentStatus(prev => {
+                if (!prev[msgId]) return prev; // 安全检查
+                return {
+                  ...prev,
+                  [msgId]: {
+                    ...prev[msgId],
+                    reactPhase: 'action',
+                    currentReactStep: 6,
+                    reactSteps: prev[msgId].reactSteps?.map((step, idx) => 
+                      idx === 5 ? { ...step, complete: true } : step
+                    ) || []
+                  }
+                };
+              });
+            }, enableReflection ? 2000 : 1000);
+            
+          }, 1000);
+          
+        }, 4500);
+        statusTimers[msgId].push(timer3);
+        
+        // 最终步骤：完成处理
+        const timer4 = setTimeout(() => {
+          setAgentStatus(prev => ({
+            ...prev,
+            [msgId]: {
+              ...prev[msgId],
+              currentStep: '生成响应...',
+              totalSteps: 5
+            }
+          }));
+        }, 6000);
+        statusTimers[msgId].push(timer4);
+        
+        // 清理函数：如果请求被取消，清除所有定时器
+        return () => {
+          if (statusTimers[msgId]) {
+            statusTimers[msgId].forEach(timer => clearTimeout(timer));
+            delete statusTimers[msgId];
+          }
+        };
+      }
+      
+      // 直接处理响应内容，不使用setTimeout延迟
+      try {
+        // 检查当前活动会话是否仍然是发送请求的会话
+        const isStillActiveSession = currentChatId === processingSessionId
+        console.log('🔍 Processing response for session:', processingSessionId, 'Current active session:', currentChatId, 'Still active:', isStillActiveSession)
+        
+        const assistantContent = parseApiResponse(data, useAgent)
+        
+        // 确保 assistantContent 是字符串并且不为空
+        let finalContent = typeof assistantContent === 'string' 
+          ? assistantContent 
+          : JSON.stringify(assistantContent)
+        
+        // 如果内容为空或只是空白字符，使用默认消息
+        if (!finalContent || finalContent.trim() === '') {
+          finalContent = data.success ? 
+            '已完成对您请求的处理，但无法生成详细回复。' : 
+            '处理请求时出现问题，请查看详细信息。'
+          console.warn('⚠️ Empty response content, using fallback message')
+        }
+        
+        console.log('📝 Final content to display:', finalContent.substring(0, 100), '...')
+        
+        // 增强消息数据，添加Agent模式的详细信息
+        const enhancedMessage: Message = {
+          ...assistantMessage,
+          content: finalContent,
+          // 模式增强信息（後端優先，前端fallback）
+          mode: data.mode || (useAgent ? 'agent' : 'llm'),
+          model_used: data.model_used || selectedModel,
+          execution_time: data.execution_time,
+          steps_taken: data.steps_taken,
+          generated_image: data.generated_image || data.image_data_uri,
+          execution_trace: data.execution_trace || [],
+          reasoning_steps: data.reasoning_steps || [],
+          tools_used: data.tools_used || []
+        }
+        
+        // 更新消息内容，但考虑会话ID
+        setMessages(prev => {
+          // 首先过滤掉所有其他会话的消息
+          const filteredPrev = prev.filter(msg => !msg.sessionId || msg.sessionId === processingSessionId);
+          
+          // 创建更新后的消息列表
+          const updatedMessages = filteredPrev.map(msg => 
+            msg.id === assistantMessage.id ? { ...enhancedMessage, sessionId: processingSessionId } : msg
+          );
+          
+          // 如果用户已经切换到其他会话，控制台记录但不影响更新
+          if (currentChatId !== processingSessionId) {
+            console.log('⚠️ User switched to another session. Response added to session:', processingSessionId);
           }
           
-          // 更新消息内容
-          setMessages(prev => prev.map(msg => 
-            msg.id === assistantMessage.id 
-              ? enhancedMessage
-              : msg
-          ))
+          console.log('✅ Message content updated successfully for session:', processingSessionId)
+          return updatedMessages;
+        })
           
           // 更新增强的消息统计信息
           setMessageStats(prev => ({
@@ -829,13 +1554,31 @@ export default function ModernChatGPT() {
             return newResponses
           })
           
+          // 如果是新會話且收到回覆，重新生成智能標題
+          if (isNewSession) {
+            console.log('🔄 Generating smart title for new session...')
+            setTimeout(async () => {
+              try {
+                await loadUserSessionsFromAPI()
+                console.log('✅ Sessions reloaded with AI-generated title')
+              } catch (error) {
+                console.warn('⚠️ Failed to reload sessions after title generation:', error)
+              }
+            }, 1000) // 1秒延遲，給後端時間生成標題
+          }
+          
         } catch (parseError) {
           console.error('❌ Error parsing response:', parseError)
-          setMessages(prev => prev.map(msg => 
-            msg.id === assistantMessage.id 
-              ? { ...msg, content: '响应解析失败，请查看原始JSON' }
-              : msg
-          ))
+          setMessages(prev => {
+            // 首先过滤掉所有其他会话的消息
+            const filteredPrev = prev.filter(msg => !msg.sessionId || msg.sessionId === processingSessionId);
+            // 然后更新特定消息
+            return filteredPrev.map(msg => 
+              msg.id === assistantMessage.id 
+                ? { ...msg, content: '响应解析失败，请查看原始JSON', sessionId: processingSessionId }
+                : msg
+            );
+          })
           
           // 更新失败统计
           setLlmStats(prev => ({
@@ -844,25 +1587,8 @@ export default function ModernChatGPT() {
             successRate: ((prev.successRate * (prev.totalCalls - 1))) / prev.totalCalls
           }))
         }
-      }, 10) // 10ms延迟，让UI先更新
-        // 设置当前会话ID（如果是新会话）
-      if (!currentChatId) {
-        setCurrentChatId(sessionId)
-      }      console.log('✅ Message sent successfully to session:', sessionId)
       
-      // 如果是新會話的第一條消息，重新加載會話列表以獲取智能生成的標題
-      if (isNewSession || (!currentChatId && sessionId)) {
-        console.log('🔄 Reloading sessions to get updated title...')
-        setTimeout(async () => {
-          try {
-            await loadUserSessionsFromAPI()
-            console.log('✅ Sessions reloaded with updated titles')
-          } catch (error) {
-            console.warn('⚠️ Failed to reload sessions after title generation:', error)
-          }
-        }, 1000) // 1秒延遲，給後端時間生成標題
-      }
-      
+      console.log('✅ Message sent successfully to session:', sessionId)
       toast.success(`${useAgent ? 'Agent' : '聊天'}響應已收到`)
         } catch (error) {
       console.error('❌ Error sending message:', error)
@@ -875,7 +1601,7 @@ export default function ModernChatGPT() {
         mode: useAgent ? 'Agent' : 'Chat',
         model: selectedModel,
         apiKey: API_KEY,
-        requestBody: await buildRequestBodyWithSession([...messages, userMessage], currentChatId).catch(() => 'Failed to build request body')
+        requestBody: await buildRequestBodyWithSession(currentMessages, sessionId).catch(() => 'Failed to build request body')
       }
       
       // 生成友好的錯誤消息
@@ -906,10 +1632,16 @@ export default function ModernChatGPT() {
         timestamp: new Date().toISOString(),        // 添加錯誤相關的元數據
         mode: useAgent ? 'agent' : 'llm',
         model_used: selectedModel,
-        error_details: errorDetails // 用於JSON按鈕顯示
+        error_details: errorDetails, // 用於JSON按鈕顯示
+        sessionId: sessionId // 确保错误消息也有会话ID
       }
       
-      setMessages(prev => [...prev, errorMessage])
+      // 添加错误消息到当前会话，同时过滤掉其他会话的消息
+      setMessages(prev => {
+        // 首先过滤掉所有其他会话的消息，只保留当前会话的消息或没有sessionId的旧消息
+        const filteredPrev = prev.filter(msg => !msg.sessionId || msg.sessionId === sessionId);
+        return [...filteredPrev, errorMessage];
+      })
       
       // 將錯誤詳情存儲到rawResponses中，這樣用戶可以通過JSON按鈕查看
       setRawResponses(prev => ({
@@ -919,7 +1651,29 @@ export default function ModernChatGPT() {
       
       toast.error(`${useAgent ? 'Agent' : '聊天'}請求失敗`)
     } finally {
-      setIsLoading(false)
+      // 只在这是当前会话时才清除加载状态
+      if (sessionId === currentChatId) {
+        console.log('✅ Clearing loading state for current session:', sessionId)
+        setIsLoading(false)
+        setLoadingSessionId(null) // 清除正在加载的会话ID
+        setCurrentLoadingModel('') // 清除当前加载模型
+        
+        // 清除localStorage中的状态
+        localStorage.removeItem('chatLoadingState')
+        localStorage.removeItem('chatLoadingSessionId')
+        localStorage.removeItem('currentLoadingModel')
+      } else {
+        console.log('⚠️ Not clearing loading state - session has changed:', {
+          'processingSession': sessionId,
+          'currentSession': currentChatId
+        })
+        // 如果用户已经切换到其他会话，仅重置这个会话的加载状态
+        // 但不影响UI的当前加载状态
+        if (loadingSessionId === sessionId) {
+          setLoadingSessionId(null)
+          localStorage.removeItem('chatLoadingSessionId')
+        }
+      }
       requestManager.finishRequest()
     }
   }
@@ -1064,8 +1818,8 @@ export default function ModernChatGPT() {
     toast.success('所有對話歷史已清除')
   }  // API configuration
   const API_KEY = 'test_api_key'
-  const REQUEST_TIMEOUT = 120000 // 120 seconds (2 minutes) for chat mode
-  const AGENT_REQUEST_TIMEOUT = 240000 // 240 seconds (4 minutes) for agent mode
+  const REQUEST_TIMEOUT = 7200000 // 2 hours for chat mode
+  const AGENT_REQUEST_TIMEOUT = 7200000 // 2 hours for agent mode
   // Create abort controller for request cancellation with better state management
   const abortControllerRef = useRef<AbortController | null>(null)
   const isRequestActiveRef = useRef(false)
@@ -1154,9 +1908,74 @@ export default function ModernChatGPT() {
     }
   }
 
-  // Session management functions
-  const createNewSession = async (): Promise<string> => {
+  // 检查会话是否已经收到响应
+  const checkSessionResponseStatus = async (sessionId: string): Promise<boolean> => {
     try {
+      console.log('🔍 Checking if session has received response:', sessionId);
+      // 获取会话的最新消息
+      const response = await fetch(`${API_BASE_URL}/sessions/test/${sessionId}`, {
+        headers: {
+          'X-API-KEY': API_KEY,
+          'accept': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        console.warn('⚠️ Failed to check session status:', response.status);
+        return false;
+      }
+      
+      const data = await response.json();
+      
+      // 检查会话中的消息
+      if (data.success && data.session && data.session.messages) {
+        const messages = data.session.messages;
+        
+        // 如果存在的最后一条消息是AI回复，说明请求已经完成
+        if (messages.length > 0) {
+          // 获取最后两条消息
+          const lastMessage = messages[messages.length - 1];
+          const previousMessage = messages.length > 1 ? messages[messages.length - 2] : null;
+          
+          // 如果最后一条消息是助手的回复，且倒数第二条是用户的问题，说明服务器已经响应
+          if (lastMessage.role === 'assistant' && previousMessage && previousMessage.role === 'user') {
+            console.log('✅ Server has already responded to this session');
+            return true;
+          }
+        }
+      }
+      
+      console.log('⏳ Session is still waiting for response or no messages found');
+      return false;
+    } catch (error) {
+      console.error('❌ Error checking session response status:', error);
+      return false;
+    }
+  };
+
+  // Session management functions
+  const createNewSession = async (initialTitle?: string, initialMessage?: Message): Promise<string> => {
+    try {
+      // 如果提供了初始标题，使用它；否则使用默认标题
+      const sessionTitle = initialTitle ? 
+        (initialTitle.length > 50 ? initialTitle.substring(0, 50) + '...' : initialTitle) : 
+        "新对话"
+      
+      // 准备请求体，如果有初始消息则包含进去
+      const requestBody: any = {
+        user_id: "test",
+        title: sessionTitle
+      }
+      
+      // 如果提供了初始消息，添加到请求中
+      if (initialMessage) {
+        requestBody.initial_message = {
+          role: initialMessage.role,
+          content: initialMessage.content,
+          timestamp: initialMessage.timestamp
+        }
+      }
+      
       const response = await fetch(`${API_BASE_URL}/sessions`, {
         method: 'POST',
         headers: {
@@ -1164,10 +1983,7 @@ export default function ModernChatGPT() {
           'X-API-KEY': API_KEY,
           'accept': 'application/json'
         },
-        body: JSON.stringify({
-          user_id: "test",
-          title: "新对话"
-        })
+        body: JSON.stringify(requestBody)
       })
 
       if (!response.ok) {
@@ -1175,7 +1991,7 @@ export default function ModernChatGPT() {
       }
 
       const data = await response.json()
-      console.log('✅ New session created:', data.session_id)
+      console.log('✅ New session created:', data.session_id, 'with title:', sessionTitle, initialMessage ? 'and initial message' : '')
       return data.session_id
       
     } catch (error) {
@@ -1224,8 +2040,10 @@ export default function ModernChatGPT() {
       console.log('📭 Set empty session list due to server error')
     }
   }
-  const loadSessionDetail = async (sessionId: string, isHistoryLoad: boolean = false) => {
+  // 新增一个不直接更新状态的版本，用于避免UI闪烁
+  const loadSessionDetailWithoutStateUpdate = async (sessionId: string, isHistoryLoad: boolean = false) => {
     try {
+      console.log('🔍 Loading session detail (without state update) from server:', sessionId)
       const response = await fetch(`${API_BASE_URL}/sessions/test/${sessionId}`, {
         headers: {
           'X-API-KEY': API_KEY,
@@ -1241,8 +2059,112 @@ export default function ModernChatGPT() {
       
       if (data.success && data.session) {
         // 获取原始消息列表
-        let sessionMessages = data.session.messages || []
+        let sessionMessages = (data.session.messages || []).map((msg: any) => ({
+          ...msg,
+          sessionId: sessionId // 为每条消息标记会话ID
+        }))
         console.log('✅ Loaded session detail:', sessionId, sessionMessages.length, 'messages')
+        
+        // 服务器返回空消息列表，但本地有消息 - 可能是会话刚创建但消息还未同步
+        if (sessionMessages.length === 0) {
+          console.log('⚠️ Server returned empty message list for session:', sessionId)
+          // 尝试找到本地缓存的消息
+          const localSession = chatHistory.find(chat => chat.id === sessionId)
+          if (localSession && localSession.messages.length > 0) {
+            // 确保本地缓存的消息也有会话ID
+            sessionMessages = localSession.messages.map(msg => ({
+              ...msg,
+              sessionId: sessionId // 添加会话ID标识
+            }));
+          }
+        }
+        
+        // 尝试恢复会话图片
+        try {
+          sessionMessages = await restoreSessionImages(sessionId, sessionMessages)
+          console.log('🖼️ Images restored for session:', sessionId)
+        } catch (imageError) {
+          console.warn('⚠️ Failed to restore images for session:', sessionId, imageError)
+        }
+        
+        // 检查是否是正在加载的会话 - 页面刷新后需要恢复加载状态
+        const wasLoadingThisSession = 
+          localStorage.getItem('chatLoadingSessionId') === sessionId && 
+          localStorage.getItem('chatLoadingState') === 'true';
+          
+        console.log('🔍 Checking if session was loading:', { 
+          sessionId, 
+          wasLoadingThisSession,
+          localStorageId: localStorage.getItem('chatLoadingSessionId'),
+          localStorageState: localStorage.getItem('chatLoadingState')
+        });
+        
+        // 不更新状态，只返回数据
+        return { 
+          success: true, 
+          messages: sessionMessages,
+          wasLoading: wasLoadingThisSession,
+          loadingModel: localStorage.getItem('currentLoadingModel') || ''
+        };
+      }
+      return { success: false, messages: [] };
+      
+    } catch (error) {
+      console.error('❌ Error loading session detail:', error)
+      // 如果失败，尝试从本地历史加载
+      const localChat = chatHistory.find(chat => chat.id === sessionId)
+      if (localChat) {
+        // 确保本地加载的消息也有会话ID
+        const messagesWithSessionId = localChat.messages.map(msg => ({
+          ...msg,
+          sessionId: sessionId
+        }));
+        return { success: true, messages: messagesWithSessionId };
+      }
+      return { success: false, messages: [] };
+    }
+  }
+  
+  // 原始函数保留用于兼容性
+  const loadSessionDetail = async (sessionId: string, isHistoryLoad: boolean = false) => {
+    try {
+      console.log('🔍 Loading session detail from server:', sessionId)
+      const response = await fetch(`${API_BASE_URL}/sessions/test/${sessionId}`, {
+        headers: {
+          'X-API-KEY': API_KEY,
+          'accept': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        throw new Error(`获取会话详情失败: ${response.status}`)
+      }
+
+      const data = await response.json()
+      
+      if (data.success && data.session) {
+        // 获取原始消息列表
+        let sessionMessages = (data.session.messages || []).map((msg: any) => ({
+          ...msg,
+          sessionId: sessionId // 为每条消息标记会话ID
+        }))
+        console.log('✅ Loaded session detail:', sessionId, sessionMessages.length, 'messages')
+        
+        // 服务器返回空消息列表，但本地有消息 - 可能是会话刚创建但消息还未同步
+        if (sessionMessages.length === 0) {
+          console.log('⚠️ Server returned empty message list for session:', sessionId)
+          // 尝试找到本地缓存的消息
+          const localSession = chatHistory.find(chat => chat.id === sessionId)
+          if (localSession && localSession.messages.length > 0) {
+            // 确保本地缓存的消息也有会话ID
+            sessionMessages = localSession.messages.map(msg => ({
+              ...msg,
+              sessionId: sessionId // 添加会话ID标识
+            }));
+            console.log('🔄 Using local messages for session:', sessionId, localSession.messages.length, 'messages')
+            sessionMessages = localSession.messages
+          }
+        }
           // 尝试恢复会话图片
         try {
           sessionMessages = await restoreSessionImages(sessionId, sessionMessages)
@@ -1343,7 +2265,8 @@ export default function ModernChatGPT() {
           setIsLoadingHistory(true)
         }
         
-        setMessages(sessionMessages)
+        // 设置消息时，确保只包含当前会话的消息，替换所有其他会话的消息
+        setMessages(sessionMessages.filter((msg: Message) => !msg.sessionId || msg.sessionId === sessionId))
         setCurrentChatId(sessionId)
         
         // 重置标志
@@ -1363,8 +2286,14 @@ export default function ModernChatGPT() {
           setIsLoadingHistory(true)
         }
         
-        setMessages(localChat.messages)
+        // 确保本地加载的消息也有会话ID
+        const messagesWithSessionId = localChat.messages.map(msg => ({
+          ...msg,
+          sessionId: sessionId // 添加会话ID标识
+        }));
+        setMessages(messagesWithSessionId)
         setCurrentChatId(sessionId)
+        console.log('📋 Added sessionId to locally loaded messages:', sessionId)
         
         // 重置标志
         if (isHistoryLoad) {
@@ -1468,8 +2397,12 @@ export default function ModernChatGPT() {
     }
   }  // 构建带有会话ID的请求体
   const buildRequestBodyWithSession = async (messages: Message[], sessionId?: string) => {
-    // 如果没有提供sessionId，创建新会话
-    const finalSessionId = sessionId || await createNewSession()
+    // 如果没有提供sessionId，创建新会话（使用最后一条消息作为标题和内容）
+    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : undefined;
+    const finalSessionId = sessionId || await createNewSession(
+      lastMessage ? lastMessage.content : undefined,
+      lastMessage // 传递完整的消息对象，确保新会话包含初始消息
+    )
     
     console.log('🔧 Building request body - useAgent:', useAgent)
     
@@ -1603,8 +2536,12 @@ export default function ModernChatGPT() {
   }
 
   // 会话管理API调用函数
-  const createNewSessionAPI = async () => {
+  const createNewSessionAPI = async (initialTitle?: string) => {
     try {
+      const sessionTitle = initialTitle ? 
+        (initialTitle.length > 50 ? initialTitle.substring(0, 50) + '...' : initialTitle) : 
+        "新对话"
+        
       const response = await fetch(`${API_BASE_URL}/sessions`, {
         method: 'POST',
         headers: {
@@ -1613,13 +2550,13 @@ export default function ModernChatGPT() {
         },
         body: JSON.stringify({
           user_id: "test",
-          title: "新对话"
+          title: sessionTitle
         }),
       })
 
       if (response.ok) {
         const result = await response.json()
-        console.log('✅ Session created on server:', result.session_id)
+        console.log('✅ Session created on server:', result.session_id, 'with title:', sessionTitle)
         return result.session_id
       } else {
         console.error('❌ Failed to create session on server')
@@ -1647,10 +2584,12 @@ export default function ModernChatGPT() {
             id: msg.id || Date.now().toString(),
             role: msg.role,
             content: msg.content,
-            timestamp: msg.timestamp || new Date().toISOString()
+            timestamp: msg.timestamp || new Date().toISOString(),
+            sessionId: sessionId // 确保每条消息都有sessionId
           }))
           
-          setMessages(sessionMessages)
+          // 只保留当前会话的消息
+          setMessages(sessionMessages.filter((msg: Message) => !msg.sessionId || msg.sessionId === sessionId))
           setCurrentChatId(sessionId)
           
           // 更新本地缓存
@@ -1674,7 +2613,7 @@ export default function ModernChatGPT() {
       console.error('❌ Error loading session:', error)
       return false
     }  }  // Enhanced API request function with retry logic and adaptive timeout
-  const makeApiRequest = async (endpoint: string, body: any, retries = 2): Promise<any> => {    // 使用請求管理器來處理請求生命週期
+  const makeApiRequest = async (endpoint: string, body: any): Promise<any> => {    // 使用請求管理器來處理請求生命週期
     const controller = requestManager.startRequest()
     if (abortControllerRef.current && abortControllerRef.current.signal.aborted) {
       console.log('Previous request was already aborted, creating new controller')
@@ -1693,7 +2632,6 @@ export default function ModernChatGPT() {
 
     try {
       console.log(`🚀 Making API request to: ${endpoint}`)
-      console.log(`🔄 Attempt: ${3 - retries}/3`)
       console.log(`⏰ Timeout: ${timeout}ms (${isAgentRequest ? 'Agent' : 'Chat'} mode)`)
       console.log('📦 Request body:', JSON.stringify(body, null, 2))
 
@@ -1726,41 +2664,25 @@ export default function ModernChatGPT() {
         } catch (e) {
           // Not JSON, use raw text
         }
-        
         throw new Error(`API请求失败: ${response.status} - ${errorText}`)
-      }      const data = await response.json()
+      }
+      const data = await response.json()
       console.log('✅ API Response received:', data)
-      
       // 成功完成請求，通知請求管理器
       requestManager.finishRequest()
       return data
-
     } catch (error: any) {
       clearTimeout(timeoutId)
-      
       if (error.name === 'AbortError') {
         console.log('🛑 Request was cancelled')
-        // 只有在非重試情況下才完成請求
-        if (retries <= 0) {
-          requestManager.finishRequest()
-        }
+        requestManager.finishRequest()
         if (isAgentRequest) {
           throw new Error(`Agent处理超时 (${timeout/1000}秒)，可能是因为任务复杂度较高。请稍后重试或简化请求。`)
         } else {
           throw new Error('请求已取消')
         }
       }
-
-      console.error(`❌ API request failed (attempt ${3 - retries}/3):`, error)
-
-      if (retries > 0 && !error.message.includes('please try again later')) {
-        console.log(`🔄 Retrying in ${(3 - retries) * 1000}ms...`)
-        await new Promise(resolve => setTimeout(resolve, (3 - retries) * 1000))
-        // 重試時不完成請求，讓新的請求繼續使用同一個管理器
-        return makeApiRequest(endpoint, body, retries - 1)
-      }
-
-      // 請求失敗且不重試，完成請求
+      console.error(`❌ API request failed:`, error)
       requestManager.finishRequest()
       throw error
     }
@@ -1811,13 +2733,24 @@ export default function ModernChatGPT() {
       } else {
         // Chat mode response parsing
         console.log('💬 Parsing Chat mode response')
+        console.log('🔍 Available data keys:', Object.keys(data))
         
         if (data.message) {
           message = data.message
+          console.log('✅ Found message in data.message')
         } else if (data.choices && data.choices[0] && data.choices[0].message) {
           message = data.choices[0].message.content
+          console.log('✅ Found message in data.choices[0].message.content')
         } else if (data.response) {
           message = data.response
+          console.log('✅ Found message in data.response')
+        } else if (data.content) {
+          message = data.content
+          console.log('✅ Found message in data.content (fallback)')
+        } else {
+          console.warn('⚠️ Chat response structure not recognized')
+          console.log('🔍 Data structure:', JSON.stringify(data, null, 2).substring(0, 500) + '...')
+          message = '收到响应但无法解析内容，请查看原始JSON。'
         }
       }
         
@@ -2267,7 +3200,9 @@ export default function ModernChatGPT() {
         models={models}
         apiStatus={apiStatus}
         messages={messages}
-        isLoading={isLoading}
+        isLoading={isLoading && !isLoadingHistory} 
+        loadingSessionId={loadingSessionId}
+        currentLoadingModel={currentLoadingModel}
         input={input}
         setInput={setInput}
         sendMessage={sendMessage}
@@ -2295,6 +3230,9 @@ export default function ModernChatGPT() {
         showPerformanceMetrics={showPerformanceMetrics}
         setShowPerformanceMetrics={setShowPerformanceMetrics}
         rawResponses={rawResponses}
+        setRawResponses={setRawResponses}
+        currentChatId={currentChatId}
+        setCurrentChatId={setCurrentChatId}
         expandedJson={expandedJson}
         setExpandedJson={setExpandedJson}
         showReasoningSteps={showReasoningSteps}
@@ -2336,6 +3274,7 @@ export default function ModernChatGPT() {
         getProviderIcon={getProviderIcon}
         getProviderDisplayName={getProviderDisplayName}
         API_BASE_URL={API_BASE_URL}
+        agentStatus={agentStatus}
         API_KEY={API_KEY}
       />
 </div>

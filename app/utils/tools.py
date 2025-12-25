@@ -1160,113 +1160,46 @@ async def generate_code(
             "error": str(e)
         }
         
-# MARK: 内容长度管理
+# MARK: 极简内容长度管理器
 async def ensure_content_length(
-    content: str, 
-    max_tokens: int = 6000, 
+    content: str,
+    max_tokens: int = 4000,
     context_description: str = "内容",
-    force_truncate: bool = None  # None表示使用配置文件设置
+    force_truncate: bool = None
 ) -> str:
     """
-    确保内容长度不超过LLM处理的token限制
-    
-    Args:
-        content: 原始内容
-        max_tokens: 最大允许的token数量(近似值，按平均每个token 4个字符计算)
-        context_description: 内容的描述，用于日志记录
-        force_truncate: 是否强制截断而不使用AI整理（None=使用配置文件设置）
-        
-    Returns:
-        处理后的内容，确保不会超过token限制
+    极简内容长度管理器：
+    - force_truncate=True 时直接截断并加说明
+    - 否则用LLM摘要，失败兜底截断
     """
+    from app.core.config import get_settings
+    settings = get_settings()
+    if force_truncate is None:
+        force_truncate = getattr(settings, 'FORCE_CONTENT_TRUNCATE', False)
+    safe_chars = max_tokens * 2
+    if force_truncate:
+        return content[:safe_chars] + f"\n\n[{context_description}已强制截断至{safe_chars}字符]"
+    # LLM摘要模式
     try:
-        from app.core.config import get_settings
-        settings = get_settings()
-        
-        # 如果没有明确指定，使用配置文件设置
-        if force_truncate is None:
-            force_truncate = settings.FORCE_CONTENT_TRUNCATE
-        
-        # 硬性限制：使用配置文件中的设置
-        hard_limit_tokens = settings.MAX_CONTENT_HARD_LIMIT
-        hard_limit_chars = hard_limit_tokens * 2
-        
-        if len(content) > hard_limit_chars:
-            logger.warning(f"{context_description}长度({len(content)}字符)超过硬性限制，强制截断至{hard_limit_chars}字符")
-            truncated = content[:hard_limit_chars] + f"\n\n[{context_description}超过硬性限制({hard_limit_tokens} tokens)，已强制截断]"
-            return truncated
-        
-        # 粗略估计token数量（中文和英文字符的token计算有差异，这里用字符数/4作为近似）
-        estimated_tokens = len(content) / 2
-        
-        # 如果估计的token数量超过限制
-        if estimated_tokens > max_tokens:
-            logger.info(f"{context_description}估计token数({int(estimated_tokens)})超过限制({max_tokens})")
-            
-            # 检查是否已经处理过
-            if "[以下是经过整理的" in content or "[内容已安全截断]" in content or "[内容超过硬性限制" in content:
-                logger.info(f"{context_description}已经经过处理，直接截断")
-                max_safe_chars = max_tokens * 2
-                truncated = content[:max_safe_chars] + f"\n\n[{context_description}已再次截断，原长度: {len(content)}字符]"
-                return truncated
-            
-            # 根据配置选择处理方式
-            if force_truncate:
-                # 暴力截断模式
-                max_safe_chars = max_tokens * 2
-                truncated = content[:max_safe_chars] + f"\n\n[{context_description}已截断，原长度: {len(content)}字符，截断后: {len(content[:max_safe_chars])}字符]"
-                logger.info(f"已暴力截断{context_description}至{len(truncated)}字符")
-                return truncated
-            else:
-                # 智能整理模式（保留以备将来使用）
-                try:
-                    from app.services.llm_service import llm_service
-                    
-                    # 截断过长的输入，避免AI整理模型也超出限制
-                    max_input_chars = 8000
-                    truncated_content = content
-                    if len(content) > max_input_chars:
-                        truncated_content = content[:max_input_chars] + "...[内容已预截断]"
-                    
-                    # 构建提示词
-                    messages = [
-                        {
-                            "role": "system",
-                            "content": f"请提取以下{context_description}的核心要点和关键信息。保留最重要的事实、数据和观点，去除冗余内容。输出需精简，但必须保留原文的关键信息。目标是将内容精简到原来的1/3左右。"
-                        },
-                        {
-                            "role": "user",
-                            "content": truncated_content
-                        }
-                    ]
-                    
-                    # 使用较小的模型进行内容整理（跳过内容检查避免循环调用）
-                    model_name = "gemma-3n-e4b-it"
-                    response = await llm_service.send_llm_request(messages, model_name, skip_content_check=True)
-                    
-                    if "choices" in response and response["choices"]:
-                        summarized_content = response["choices"][0]["message"].get("content", "")
-                        
-                        # 确保整理后的内容有意义
-                        if summarized_content and len(summarized_content) > 100:
-                            logger.info(f"成功整理{context_description}，原长度: {len(content)}字符，整理后: {len(summarized_content)}字符")
-                            return f"[以下是经过整理的{context_description}]\n\n{summarized_content}\n\n[原内容长度: {len(content)}字符]"
-                        
-                    logger.warning(f"AI整理结果无效，回退到暴力截断")
-                except Exception as e:
-                    logger.error(f"使用AI整理内容时出错: {str(e)}，回退到暴力截断")
-                
-                # AI整理失败，回退到暴力截断
-                max_safe_chars = max_tokens * 4
-                truncated = content[:max_safe_chars] + f"\n\n[{context_description}AI整理失败，已截断，原长度: {len(content)}字符]"
-                logger.info(f"已截断{context_description}至{len(truncated)}字符")
-                return truncated
-        
-        # 内容长度在限制范围内，直接返回原内容
-        return content
-        
+        from app.services.llm_service import llm_service
+        input_text = content
+        messages = [
+            {
+                "role": "system",
+                "content": f"Extract the core ideas and key information from the following content. Keep only the most important facts, data points, and arguments. Remove redundancy and irrelevant details. Your output should be a concise summary, approximately one-third the length of the original content, while preserving the essential meaning and insights."
+            },
+            {
+                "role": "user",
+                "content": input_text
+            }
+        ]
+        model_name = "gemma-3n-e4b-it"
+        response = await llm_service.send_llm_request(messages, model_name, skip_content_check=True)
+        if response.get("choices"):
+            summary = response["choices"][0]["message"].get("content", "")
+            if summary and len(summary) > 50:
+                return f"[以下是经过整理的{context_description}]\n\n{summary}\n\n[原内容长度:{len(content)}]"
     except Exception as e:
-        logger.error(f"内容长度管理出错: {str(e)}")
-        # 出错时进行安全截断
-        safe_length = 24000  # 约6000 tokens
-        return content[:safe_length] + f"\n\n[内容长度管理出错，已安全截断至{safe_length}字符]"
+        logger.error(f"LLM整理{context_description}异常: {str(e)}，兜底截断")
+    # 摘要失败兜底
+    return content[:safe_chars] + f"\n\n[{context_description}已兜底截断至{safe_chars}字符]"

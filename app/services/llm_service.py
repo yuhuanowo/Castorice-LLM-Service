@@ -788,27 +788,25 @@ class LLMService:
         Returns:
             API响应结果
         """
-        # 检查消息内容长度，避免token爆炸（只在非跳过检查时执行）
-        if not skip_content_check:
+        # 只针对GitHub模型请求做内容长度管理
+        provider = self._get_model_provider(model_name)
+        if provider == ModelProvider.GITHUB and not skip_content_check:
             try:
                 from app.utils.tools import ensure_content_length
-                
-                # 处理用户消息中的内容
+                # 处理所有消息中的内容（不限于用户消息）
                 for i, message in enumerate(messages):
-                    if message.get("role") == "user" and "content" in message and isinstance(message["content"], str):
-                        # 对用户消息内容进行长度管理
+                    if "content" in message and isinstance(message["content"], str):
                         original_length = len(message["content"])
                         message["content"] = await ensure_content_length(
                             content=message["content"],
                             max_tokens=6000,
-                            context_description="User message"
+                            context_description=f"{message.get('role', 'unknown').capitalize()} message"
                         )
-                        
-                        # 如果内容被修改，记录日志
                         if len(message["content"]) < original_length:
-                            logger.info(f"用户消息已优化，原长度: {original_length}, 优化后: {len(message['content'])}")
+                            logger.info(f"{message.get('role', '消息')}消息已优化，原长度: {original_length}, 优化后: {len(message['content'])}")
             except Exception as e:
                 logger.warning(f"消息长度管理失败，继续使用原始消息: {str(e)}")
+        
         
         # 确定模型提供商
         provider = self._get_model_provider(model_name)        
@@ -865,7 +863,7 @@ class LLMService:
                     url,
                     headers=headers,
                     json=body,
-                    timeout=300.0  # 增加超时时间，确保大型输入有足够处理时间
+                    timeout=600.0  # 增加超时时间，确保大型输入有足够处理时间
                 )
                 
                   # 处理错误响应
@@ -1212,7 +1210,7 @@ class LLMService:
                     url,
                     headers=headers,
                     json=body,
-                    timeout=300.0  # 增加超时时间，本地模型可能需要更长时间
+                    timeout=6000.0  # 增加超时时间，本地模型可能需要更长时间
                 )
                 
                 # 处理错误响应
@@ -1323,7 +1321,7 @@ class LLMService:
                     url,
                     headers=headers,
                     json=body,
-                    timeout=120.0  # NVIDIA NIM的超时时间
+                    timeout=600.0  # NVIDIA NIM的超时时间
                 )
                 
                 # 处理错误响应
@@ -1393,7 +1391,7 @@ class LLMService:
                     url,
                     headers=headers,
                     json=body,
-                    timeout=300.0  # 增加超时时间，与其他API保持一致
+                    timeout=600.0  # 增加超时时间，与其他API保持一致
                 )
                 
                 # 处理错误响应
