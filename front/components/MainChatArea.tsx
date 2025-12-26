@@ -369,7 +369,7 @@ export function MainChatArea({
   return (
     <div className="flex-1 flex flex-col min-w-0">
       {/* Header - 移除底部边框 */}
-      <div className="h-14 flex items-center justify-between px-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <div className="h-14 flex items-center justify-between px-4 bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
         <div className="flex items-center gap-3">
           {!sidebarOpen && (
               <Button
@@ -403,7 +403,7 @@ export function MainChatArea({
               <>            
               {/* Model Selector - 修复图标调用问题 */}
               <Select value={selectedModel} onValueChange={setSelectedModel}>
-              <SelectTrigger className="w-[280px] h-10 bg-background/80 border-border/60 hover:border-border/80 rounded-xl text-sm font-medium transition-all duration-200 hover:shadow-sm">
+              <SelectTrigger className="w-70 h-10 bg-background/80 border-border/60 hover:border-border/80 rounded-xl text-sm font-medium transition-all duration-200 hover:shadow-sm">
                 <SelectValue placeholder="选择模型">
                   <div className="flex items-center gap-2 min-w-0">
                     {/* 使用模型开发者图标 */}
@@ -415,7 +415,7 @@ export function MainChatArea({
                 </SelectValue>
               </SelectTrigger>
               
-              <SelectContent className="w-[320px] max-h-[500px] bg-background/95 backdrop-blur-xl border-border/50 rounded-xl shadow-xl overflow-hidden">
+              <SelectContent className="w-[320px] max-h-125 bg-background/95 backdrop-blur-xl border-border/50 rounded-xl shadow-xl overflow-hidden">
                 {Object.entries(groupModelsByProvider(models)).map(([provider, providerModels]) => (
                   <div key={provider}>
                     {/* Provider Header - 使用提供商图标 */}
@@ -436,7 +436,7 @@ export function MainChatArea({
                           key={model.id} 
                           value={model.id}
                           className={cn(
-                            "rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/80 focus:bg-accent/80 data-[highlighted]:bg-accent/60 mx-1 my-1 px-3 py-2.5",
+                            "rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/80 focus:bg-accent/80 data-highlighted:bg-accent/60 mx-1 my-1 px-3 py-2.5",
                             // 修复：为选中状态的ring留出足够空间，并确保不被裁切
                             selectedModel === model.id && "ring-2 ring-primary/60 bg-primary/10 border-primary/30 ring-inset"
                           )}
@@ -648,7 +648,7 @@ export function MainChatArea({
                     <div className="group py-6 last:border-0 message-item">
                   <div className="flex gap-4">
                     {/* Avatar */}
-                    <div className="flex-shrink-0">
+                    <div className="shrink-0">
                       {message.role === 'user' ? (
                         <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
                           <User className="w-4 h-4 text-primary-foreground" />
@@ -1019,7 +1019,7 @@ export function MainChatArea({
                           <div className="space-y-2">
                             {message.reasoning_steps.map((step, index) => (
                               <div key={index} className="flex gap-3 p-2 bg-background rounded border-l-2 border-muted">
-                                <div className="flex-shrink-0 mt-1">
+                                <div className="shrink-0 mt-1">
                                   {step.type === 'thought' && <Brain className="w-4 h-4 text-blue-500" />}
                                   {step.type === 'action' && <Zap className="w-4 h-4 text-green-500" />}
                                   {step.type === 'observation' && <Eye className="w-4 h-4 text-purple-500" />}
@@ -1057,7 +1057,7 @@ export function MainChatArea({
                           <div className="space-y-2">
                             {message.execution_trace.map((trace, index) => (
                               <div key={index} className="flex gap-3 p-2 bg-background rounded border-l-2 border-muted">
-                                <div className="flex-shrink-0 mt-1">
+                                <div className="shrink-0 mt-1">
                                   {trace.status === 'planning' && <Loader className="w-4 h-4 text-yellow-500 animate-spin" />}
                                   {trace.status === 'executing' && <Zap className="w-4 h-4 text-blue-500" />}
                                   {trace.status === 'completed' && <CheckCircle className="w-4 h-4 text-green-500" />}
@@ -1247,7 +1247,7 @@ export function MainChatArea({
                 >
                   <div className="flex gap-4">
                     {/* Avatar - Same as completed messages */}
-                    <div className="flex-shrink-0">
+                    <div className="shrink-0">
                       <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center border">
                         <Bot className="w-4 h-4 text-muted-foreground" />
                       </div>
@@ -1374,7 +1374,7 @@ export function MainChatArea({
                                         isLatest ? "bg-muted/50" : "hover:bg-muted/30"
                                       )}>
                                         <div className={cn(
-                                          "w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0",
+                                          "w-5 h-5 rounded-full flex items-center justify-center shrink-0",
                                           step.type === 'thought' && "bg-blue-100 dark:bg-blue-900/30",
                                           step.type === 'action' && "bg-green-100 dark:bg-green-900/30",
                                           step.type === 'observation' && "bg-purple-100 dark:bg-purple-900/30",
@@ -1401,7 +1401,7 @@ export function MainChatArea({
                                             initial={{ scale: 0 }}
                                             animate={{ scale: 1 }}
                                           >
-                                            <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+                                            <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
                                           </motion.div>
                                         )}
                                       </div>
@@ -1412,7 +1412,7 @@ export function MainChatArea({
                                           animate={{ opacity: 1, height: 'auto' }}
                                           className="ml-7 px-2 py-1.5 bg-muted/30 rounded border-l-2 border-purple-400 text-[11px] text-muted-foreground"
                                         >
-                                          <div className="line-clamp-2 break-words">
+                                          <div className="line-clamp-2 wrap-break-word">
                                             {typeof step.toolResult === 'string' 
                                               ? step.toolResult.slice(0, 150) + (step.toolResult.length > 150 ? '...' : '')
                                               : JSON.stringify(step.toolResult).slice(0, 150) + '...'
@@ -1532,7 +1532,7 @@ export function MainChatArea({
       {/* 输入框容器 */}
       <div className="
         relative flex flex-col w-full 
-        bg-gradient-to-br from-muted/20 via-muted/10 to-muted/20 
+        bg-linear-to-br from-muted/20 via-muted/10 to-muted/20 
         border border-border/50
         rounded-3xl shadow-lg
         transition-all duration-500 ease-out
@@ -1552,7 +1552,7 @@ export function MainChatArea({
             onCompositionEnd={handleCompositionEnd}
             placeholder="发送消息到你的 AI 助手..."
             className="
-              w-full min-h-[60px] max-h-40 px-6 py-4 pr-20 
+              w-full min-h-15 max-h-40 px-6 py-4 pr-20 
               bg-transparent border-none resize-none 
               focus-visible:outline-none 
               placeholder:text-muted-foreground/50 text-foreground 
@@ -1605,7 +1605,7 @@ export function MainChatArea({
               {/* 按钮发光效果 */}
               {input.trim() && !(isLoading && (!loadingSessionId || loadingSessionId === currentChatId)) && (
                 <motion.div
-                  className="absolute inset-0 bg-gradient-to-r from-primary/20 to-primary/40 rounded-2xl"
+                  className="absolute inset-0 bg-linear-to-r from-primary/20 to-primary/40 rounded-2xl"
                   animate={{ opacity: [0.5, 1, 0.5] }}
                   transition={{ duration: 2, repeat: Infinity }}
                 />

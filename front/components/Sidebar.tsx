@@ -106,7 +106,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             animate={{ scale: sidebarOpen ? 1 : 0.8 }}
           >
             <div className="relative">
-              <div className="w-7 h-7 bg-gradient-to-br from-primary to-primary/80 rounded-lg flex items-center justify-center shadow-lg">
+              <div className="w-7 h-7 bg-linear-to-br from-primary to-primary/80 rounded-lg flex items-center justify-center shadow-lg">
                 <Bot className="w-4 h-4 text-primary-foreground" />
               </div>
               {/* 连接状态指示器 */}
@@ -287,7 +287,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 className="w-full justify-start gap-2.5 h-11 px-3 hover:bg-accent/60 rounded-lg transition-all duration-200"
               >
                 <div className="relative">
-                  <div className="w-7 h-7 bg-gradient-to-br from-primary to-primary/70 rounded-lg flex items-center justify-center shadow-lg">
+                  <div className="w-7 h-7 bg-linear-to-br from-primary to-primary/70 rounded-lg flex items-center justify-center shadow-lg">
                     <User className="w-3.5 h-3.5 text-primary-foreground" />
                   </div>
                   <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-background flex items-center justify-center">

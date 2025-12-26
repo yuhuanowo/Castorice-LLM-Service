@@ -627,10 +627,10 @@ const TextPreview = ({
             return (
               <div
                 key={originalIndex}
-                className="flex hover:bg-white/5 min-h-[1.5rem] group"
+                className="flex hover:bg-white/5 min-h-6 group"
               >
                 {lineNumbers && (
-                  <div className="flex-shrink-0 w-12 text-white/40 text-right pr-3 py-0.5 select-none group-hover:text-white/60">
+                  <div className="shrink-0 w-12 text-white/40 text-right pr-3 py-0.5 select-none group-hover:text-white/60">
                     {originalIndex + 1}
                   </div>
                 )}
@@ -1645,7 +1645,7 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
       return (
         <div className="flex flex-col items-center justify-center h-full space-y-8">
           <motion.div 
-            className="w-48 h-48 bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 rounded-full flex items-center justify-center shadow-2xl relative overflow-hidden"
+            className="w-48 h-48 bg-linear-to-br from-purple-500 via-pink-500 to-orange-500 rounded-full flex items-center justify-center shadow-2xl relative overflow-hidden"
             animate={{
               rotate: isPlaying ? 360 : 0
             }}
@@ -1770,7 +1770,7 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
           onClick={onClose}
         >
           {/* 頂部工具列 */}
-          <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 to-transparent p-6 z-10">
+          <div className="absolute top-0 left-0 right-0 bg-linear-to-b from-black/80 to-transparent p-6 z-10">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
                 <Badge variant="secondary" className="bg-white/10 text-white border-white/20 backdrop-blur-sm">
@@ -2389,7 +2389,7 @@ export const FileManager = ({
                     <MoreHorizontal className="w-4 h-4" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-[120px]">
+                <DropdownMenuContent align="end" className="min-w-30">
                   {Object.entries(FILE_TYPES).slice(4).map(([key, config]) => {
                     const count = typeStats[key] || 0
                     const IconComponent = config.icon
@@ -2418,7 +2418,7 @@ export const FileManager = ({
                   {filterType === 'all' ? '全部' : FILE_TYPES[filterType as keyof typeof FILE_TYPES]?.label}
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="min-w-[140px]">
+              <DropdownMenuContent align="start" className="min-w-35">
                 <DropdownMenuItem onClick={() => setFilterType('all')}>
                   <FolderOpen className="w-4 h-4 mr-2" />
                   全部
@@ -2492,7 +2492,7 @@ export const FileManager = ({
                   </span>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[140px]">
+              <DropdownMenuContent align="end" className="min-w-35">
                 <DropdownMenuItem onClick={() => setSortBy('date_desc')}>
                   <Check className={cn("w-4 h-4 mr-2", sortBy !== 'date_desc' && "opacity-0")} />
                   最新上傳
@@ -2869,7 +2869,7 @@ const FileGrid = ({
                       <MoreHorizontal className="w-3.5 h-3.5" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="min-w-[140px]">
+                  <DropdownMenuContent align="end" className="min-w-35">
                     <DropdownMenuItem onClick={() => onDownload(file.file_id, file.filename)}>
                       <Download className="w-4 h-4 mr-2" />
                       下載
@@ -2947,7 +2947,7 @@ const FileGrid = ({
             {/* 選擇指示器 */}
             <div 
               className={cn(
-                "w-4 h-4 rounded border flex items-center justify-center transition-all flex-shrink-0",
+                "w-4 h-4 rounded border flex items-center justify-center transition-all shrink-0",
                 isSelected 
                   ? "bg-primary border-primary" 
                   : "border-border/50 group-hover:border-border"
@@ -2961,7 +2961,7 @@ const FileGrid = ({
             </div>
 
             {/* 檔案圖示 */}
-            <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0", bgColor)}>
+            <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", bgColor)}>
               <IconComponent className={cn("w-4 h-4", color)} />
             </div>
 
@@ -3013,7 +3013,7 @@ const FileGrid = ({
                     <MoreHorizontal className="w-3.5 h-3.5" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-[140px]">
+                <DropdownMenuContent align="end" className="min-w-35">
                   <DropdownMenuItem 
                     onClick={() => {
                       navigator.clipboard.writeText(`${window.location.origin}/api/files/${file.file_id}`)
