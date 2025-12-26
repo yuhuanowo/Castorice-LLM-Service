@@ -2,72 +2,19 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import React from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import rehypeRaw from 'rehype-raw'
-import { Send, Plus, User, Bot, Copy, PanelLeft, ChevronDown, ArrowUp, ArrowDown, Trash2, Code, Clock, Zap, Brain, Eye, Search, Wrench, Image, FileText, Loader, CheckCircle, XCircle, AlertCircle, Settings, BookOpen, MoreHorizontal, Minimize2, X, Star, Shield, Moon, Sun, Download, Upload, HelpCircle, LogOut, Keyboard, Palette, Globe, Monitor } from 'lucide-react'
+import { Bot } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { ThemeToggle } from '@/components/theme-toggle'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import * as Separator from '@radix-ui/react-separator'
 import { Sidebar } from '@/components/Sidebar'
 import { MainChatArea } from '@/components/MainChatArea'
-import { FileManager, useFileManager } from '@/components/FileManager'
+import { useFileManager } from '@/components/FileManager'
+import type { Message, Model, ChatHistory, ReactStep, AgentStatus } from '@/types'
 
 // API 基礎 URL - 使用相对路径代理到后端
 const API_BASE_URL = '/api/backend'
-
-interface Message {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: string
-  sessionId?: string  // 添加 sessionId 字段
-  // Agent 模式增强字段
-  execution_trace?: Array<{
-    step: number
-    action: string
-    status: 'planning' | 'executing' | 'completed' | 'failed'
-    timestamp: string
-    details?: any
-  }>
-  reasoning_steps?: Array<{
-    type: 'thought' | 'action' | 'observation' | 'reflection'
-    content: string
-    timestamp: string
-  }>
-  tools_used?: Array<{
-    name: string
-    result: string
-    duration?: number
-  }>
-  // 元数据
-  model_used?: string
-  mode?: 'llm' | 'agent' | 'chat'  // 支持新的 llm 模式，保留 chat 兼容性
-  execution_time?: number
-  steps_taken?: number
-  generated_image?: string
-  // 錯誤詳情（用於JSON按鈕顯示）
-  error_details?: any
-}
-
-interface Model {
-  id: string
-  name: string
-  owned_by: string
-}
-
-interface ChatHistory {
-  id: string
-  title: string
-  messages: Message[]
-  timestamp: string
-}
 
 const TooltipButton = ({ 
   children, 
@@ -260,11 +207,12 @@ const getModelDeveloperIcon = (modelId: string, ownedBy: string) => {
     return <img src="/icons/models/nvidia.png" alt="NVIDIA" className={className} />
   }
   // Minimax 模型
-  if (modelId_lower.includes('minimax') || modelId_lower.includes('minimax')) {
+  if (modelId_lower.includes('minimax')) {
     return <img src="/icons/models/minimax.png" alt="Minimax" className={className} />
   }
   
   // 默认图标
+  return <Bot className="w-5 h-5 text-muted-foreground" />
 }
 
 // 更新提供商图标函数 - 根据你的配置
@@ -285,6 +233,7 @@ const getProviderIcon = (provider: string) => {
     case 'openrouter':
       return <img src="/icons/providers/openrouter.png" alt="OpenRouter" className={className} />
     default:
+      return <Bot className="w-6 h-6 text-muted-foreground" />
   }
 }
 
@@ -401,7 +350,6 @@ export default function ModernChatGPT() {
   const [useAgent, setUseAgent] = useState(false)
   const [enableMemory, setEnableMemory] = useState(true)
   const [enableReflection, setEnableReflection] = useState(true)
-  const [enableReactMode, setEnableReactMode] = useState(true)
   
   // API connection status
   const [apiStatus, setApiStatus] = useState<'connected' | 'disconnected' | 'testing'>('disconnected')
@@ -415,50 +363,15 @@ export default function ModernChatGPT() {
   const [showReasoningSteps, setShowReasoningSteps] = useState<{[messageId: string]: boolean}>({})
   const [showExecutionTrace, setShowExecutionTrace] = useState<{[messageId: string]: boolean}>({})
   const [showToolDetails, setShowToolDetails] = useState<{[messageId: string]: boolean}>({})
-    // 性能和统计信息
-  const [messageStats, setMessageStats] = useState<{[messageId: string]: {
-    processingTime?: number
-    tokenCount?: number
-    modelUsed?: string
-    toolsCount?: number
-    memoryUsed?: boolean
-    mcpToolsUsed?: string[]
-    responseSize?: number
-  }}>({})
   
   // 显示增强控制
   const [compactMode, setCompactMode] = useState(false)
   const [showTimestamps, setShowTimestamps] = useState(true)
   const [showModelInfo, setShowModelInfo] = useState(true)
   const [showPerformanceMetrics, setShowPerformanceMetrics] = useState(false)
-    // Agent模式的实时状态追踪
-  // 定义React推理步骤类型
-  type ReactStep = {
-    type: 'thought' | 'decision' | 'reflection' | 'action' | 'observation'
-    label: string
-    complete: boolean
-    enabled?: boolean
-  }
-
-  const [agentStatus, setAgentStatus] = useState<{[messageId: string]: {
-    currentStep?: string
-    totalSteps?: number
-    isReflecting?: boolean
-    toolsInUse?: string[]
-    memoryActive?: boolean
-    reactPhase?: string
-    reactSteps?: ReactStep[]
-    currentReactStep?: number
-  }}>({})
   
-  // LLM服务调用统计
-  const [llmStats, setLlmStats] = useState({
-    totalCalls: 0,
-    totalTokens: 0,
-    avgResponseTime: 0,
-    successRate: 0,
-    failureCount: 0
-  })
+  // Agent模式的实时状态追踪（使用共享類型）
+  const [agentStatus, setAgentStatus] = useState<{[messageId: string]: AgentStatus}>({})
   
   // Auto-scroll and scroll detection
   const scrollToBottom = useCallback(() => {
@@ -1201,395 +1114,325 @@ export default function ModernChatGPT() {
     const currentMessages = [...messages, userMessage]
     
     try {
-      const endpoint = useAgent 
-        ? `/api/agent/`
-        : `${API_BASE_URL}/chat/completions`
-
-      console.log('🎯 API endpoint:', endpoint)
-      console.log('🔧 useAgent state:', useAgent)
-      console.log('📋 Current sessionId:', sessionId)
-      console.log('📝 Messages to send:', currentMessages.length)
-      
       // Build request body using enhanced builder with session support
       const body = await buildRequestBodyWithSession(currentMessages, sessionId)
-
-      // 记录API调用开始时间
       const apiStartTime = performance.now()
-      
-      // Make API request with retry logic
-      const data = await makeApiRequest(endpoint, body)
-      
-      // 计算API响应时间
-      const apiEndTime = performance.now()
-      const apiResponseTime = apiEndTime - apiStartTime
-      
-      // 更新LLM统计信息
-      setLlmStats(prev => ({
-        totalCalls: prev.totalCalls + 1,
-        totalTokens: prev.totalTokens + (data.usage?.total_tokens || 0),
-        avgResponseTime: ((prev.avgResponseTime * prev.totalCalls) + apiResponseTime) / (prev.totalCalls + 1),
-        successRate: ((prev.successRate * prev.totalCalls) + 1) / (prev.totalCalls + 1),
-        failureCount: prev.failureCount
-      }))
-      
-      // 异步解析响应，避免阻塞UI
+
+      // 创建助手消息占位符
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: '正在处理响应...', // 临时内容
+        content: useAgent ? '🤖 Agent 正在思考...' : '正在处理响应...',
         timestamp: new Date().toISOString(),
-        sessionId: sessionId // 标记消息属于哪个会话
+        sessionId: sessionId,
+        mode: useAgent ? 'agent' : 'llm'
       }
 
-      // 先显示临时消息，避免等待，但只在当前会话中显示
-      // 使用immutable方式更新消息，确保sessionId标记正确
+      // 先显示临时消息
       setMessages(prev => {
-        // 首先过滤掉所有其他会话的消息，只保留当前会话的消息或没有sessionId的旧消息
         const filteredPrev = prev.filter(msg => !msg.sessionId || msg.sessionId === sessionId);
-        // 然后添加新消息
         return [...filteredPrev, {...assistantMessage, sessionId: sessionId}];
       })
 
-      // 存储当前处理的会话ID，用于后续检查
       const processingSessionId = sessionId
-      
-      // 初始化Agent处理状态 - 采用改进的状态模型
+
       if (useAgent) {
-        // 保存每个消息ID对应的时间控制器ID，以便清除
-        const statusTimers: {[key: string]: NodeJS.Timeout[]} = {};
+        // ============================================================
+        // Agent 模式 - 使用 SSE 流式處理
+        // ============================================================
+        console.log('🤖 Starting Agent SSE stream mode')
         
-        // 第一步：分析用户请求
+        // 初始化 Agent 狀態
+        const initialStatus = {
+          currentStep: '正在連接 Agent...',
+          totalSteps: 0,
+          isReflecting: false,
+          toolsInUse: [],
+          memoryActive: enableMemory,
+          reactPhase: 'thinking',
+          reactSteps: []
+        }
+        
         setAgentStatus(prev => ({
           ...prev,
-          [assistantMessage.id]: {
-            currentStep: '分析用户请求...',
-            totalSteps: 1,
-            isReflecting: false,
-            toolsInUse: [],
-            memoryActive: enableMemory
-          }
-        }));
-        
-        const msgId = assistantMessage.id;
-        statusTimers[msgId] = [];
-        
-        // 第二步：检索记忆
-        const timer1 = setTimeout(() => {
-          setAgentStatus(prev => ({
-            ...prev,
-            [msgId]: {
-              ...prev[msgId],
-              currentStep: '检索相关记忆...',
-              totalSteps: 2,
-              memoryActive: enableMemory
-            }
-          }));
-        }, 1500);
-        statusTimers[msgId].push(timer1);
-        
-        // 第三步：准备工具
-        const timer2 = setTimeout(() => {
-          setAgentStatus(prev => ({
-            ...prev,
-            [msgId]: {
-              ...prev[msgId],
-              currentStep: '准备工具...',
-              totalSteps: 3,
-              toolsInUse: enableMcp ? ['search', 'fileSystem', 'codeInterpreter'] : []
-            }
-          }));
-        }, 3000);
-        statusTimers[msgId].push(timer2);
-        
-        // 第四步：React推理循环 - 增加更多细节和子步骤
-        const timer3 = setTimeout(() => {
-          setAgentStatus(prev => ({
-            ...prev,
-            [msgId]: {
-              ...prev[msgId],
-              currentStep: 'React推理循环...',
-              totalSteps: 4,
-              isReflecting: enableReflection,
-              reactPhase: 'thought', // 添加React循环的子阶段
-              currentReactStep: 1, // 当前正在执行的React步骤编号
-              reactSteps: [
-                // 思考步骤
-                { type: 'thought', label: '思考: 分析问题要点', complete: true },
-                { type: 'observation', label: '观察: 收集相关信息', complete: false },
-                { type: 'action', label: '行动: 确定初始方向', complete: false },
-                // 决策步骤
-                { type: 'decision', label: '决策: 确定最佳应对策略', complete: false },
-                // 反思步骤（仅当启用时）
-                { type: 'reflection', label: '反思: 评估解决方案质量', complete: false, enabled: enableReflection },
-                // 行动步骤
-                { type: 'action', label: '行动: 生成最终回复', complete: false }
-              ]
-            }
-          }));
+          [assistantMessage.id]: initialStatus,
+          [sessionId]: initialStatus
+        }))
 
-          // 模拟React循环的子步骤过程
-          // 观察阶段
-          setTimeout(() => {
-            setAgentStatus(prev => {
-              if (!prev[msgId]) return prev; // 安全检查
-              return {
-                ...prev,
-                [msgId]: {
-                  ...prev[msgId],
-                  reactPhase: 'observation',
-                  currentReactStep: 2,
-                  reactSteps: prev[msgId].reactSteps?.map((step, idx) => 
-                    idx === 1 ? { ...step, complete: true } : step
-                  ) || []
-                }
-              };
-            });
-          }, 800);
-          
-          // 第一个行动阶段
-          setTimeout(() => {
-            setAgentStatus(prev => {
-              if (!prev[msgId]) return prev; // 安全检查
-              return {
-                ...prev,
-                [msgId]: {
-                  ...prev[msgId],
-                  reactPhase: 'action',
-                  currentReactStep: 3,
-                  reactSteps: prev[msgId].reactSteps?.map((step, idx) => 
-                    idx === 2 ? { ...step, complete: true } : step
-                  ) || []
-                }
-              };
-            });
-          }, 1600);
-          
-          // 决策阶段
-          setTimeout(() => {
-            setAgentStatus(prev => {
-              if (!prev[msgId]) return prev; // 安全检查
-              return {
-                ...prev,
-                [msgId]: {
-                  ...prev[msgId],
-                  reactPhase: 'decision',
-                  currentReactStep: 4,
-                  reactSteps: prev[msgId].reactSteps?.map((step, idx) => 
-                    idx === 3 ? { ...step, complete: true } : step
-                  ) || []
-                }
-              };
-            });
-            
-            // 反思阶段 (仅当启用反思时)
-            if (enableReflection) {
-              setTimeout(() => {
-                setAgentStatus(prev => {
-                  if (!prev[msgId]) return prev; // 安全检查
-                  return {
-                    ...prev,
-                    [msgId]: {
-                      ...prev[msgId],
-                      reactPhase: 'reflection',
-                      currentReactStep: 5,
-                      reactSteps: prev[msgId].reactSteps?.map((step, idx) => 
-                        idx === 4 ? { ...step, complete: true } : step
-                      ) || []
+        // 使用 SSE 流式請求
+        await makeAgentStreamRequest(
+          body,
+          assistantMessage.id,
+          sessionId,
+          {
+            // 處理中間步驟
+            onStep: (step) => {
+              console.log('📍 Agent step:', step.status, step.message, step.tool_name)
+              
+              // 狀態映射 - responding 和 summarizing 都是最終回覆階段，不應標記為反思
+              const phaseMap: Record<string, string> = {
+                'thinking': 'thought',
+                'executing': 'action',
+                'observing': 'observation',
+                'reflecting': 'reflection',
+                'responding': 'thought',  // 最終回覆是思考的結果
+                'summarizing': 'thought'  // 總結也是思考的結果
+              }
+
+              // 生成狀態文字
+              const statusTextMap: Record<string, string> = {
+                'thinking': '🧠 思考中',
+                'executing': '🔧 執行工具',
+                'observing': '👀 觀察結果',
+                'reflecting': '💭 反思中',
+                'responding': '✍️ 生成回答',
+                'summarizing': '📝 生成總結'
+              }
+              const statusText = statusTextMap[step.status] || '⏳ 處理中'
+
+              // 更新消息內容
+              setMessages(prev => prev.map(msg => 
+                msg.id === assistantMessage.id 
+                  ? { 
+                      ...msg, 
+                      content: `**${statusText}**\n\n${step.message || ''}`
                     }
-                  };
-                });
-              }, 1000);
-            }
-            
-            // 最终行动阶段
-            setTimeout(() => {
+                  : msg
+              ))
+
+              // 更新 Agent 狀態
               setAgentStatus(prev => {
-                if (!prev[msgId]) return prev; // 安全检查
+                const currentStatus = prev[sessionId] || prev[assistantMessage.id] || {
+                  currentStep: '',
+                  totalSteps: 0,
+                  isReflecting: false,
+                  toolsInUse: [],
+                  memoryActive: enableMemory,
+                  reactPhase: 'thinking',
+                  reactSteps: [],
+                  currentReactStep: 0
+                }
+                
+                // 構建步驟標籤，根據不同狀態顯示
+                let stepLabel = step.message || step.status || '處理中...'
+                
+                // 工具相關狀態
+                if (step.tool_name && step.status === 'executing') {
+                  stepLabel = `調用 ${step.tool_name}`
+                } else if (step.tool_name && step.status === 'observing') {
+                  stepLabel = `${step.tool_name} 執行完成`
+                }
+                // 最終回覆階段 - 不顯示為反思
+                else if (step.status === 'responding') {
+                  stepLabel = '正在生成回覆'
+                } else if (step.status === 'summarizing') {
+                  stepLabel = '生成最終總結'
+                }
+                
+                const newStep: ReactStep = {
+                  type: (phaseMap[step.status] || 'thought') as any,
+                  label: stepLabel,
+                  complete: step.status === 'observing' || step.status === 'responding' || step.status === 'summarizing',
+                  toolName: step.tool_name,
+                  toolResult: step.tool_result,
+                  timestamp: step.timestamp
+                }
+                
+                const newTotalSteps = step.step ?? (currentStatus.totalSteps || 0) + 1
+                
+                // 更新工具列表，記錄工具和結果
+                const existingTools = currentStatus.toolsInUse || []
+                const newToolsInUse = step.tool_name && !existingTools.includes(step.tool_name)
+                  ? [...existingTools, step.tool_name]
+                  : existingTools
+                
+                const updatedStatus = {
+                  ...currentStatus,
+                  currentStep: step.message || step.status || '處理中',
+                  totalSteps: newTotalSteps,
+                  isReflecting: step.status === 'reflecting',
+                  toolsInUse: newToolsInUse,
+                  reactPhase: phaseMap[step.status] || 'thought',
+                  currentReactStep: step.step || newTotalSteps,
+                  reactSteps: [...(currentStatus.reactSteps || []), newStep]
+                }
+                
                 return {
                   ...prev,
-                  [msgId]: {
-                    ...prev[msgId],
-                    reactPhase: 'action',
-                    currentReactStep: 6,
-                    reactSteps: prev[msgId].reactSteps?.map((step, idx) => 
-                      idx === 5 ? { ...step, complete: true } : step
-                    ) || []
+                  [assistantMessage.id]: updatedStatus,
+                  [sessionId]: updatedStatus
+                }
+              })
+            },
+
+            // 處理最終結果
+            onFinal: (result) => {
+              console.log('✅ Agent final result:', result)
+              const apiEndTime = performance.now()
+              const apiResponseTime = apiEndTime - apiStartTime
+
+              // 提取最終回答內容
+              let finalContent = result.message || ''
+              if (result.response?.choices?.[0]?.message?.content) {
+                finalContent = result.response.choices[0].message.content
+              }
+
+              if (!finalContent || finalContent.trim() === '') {
+                finalContent = result.success 
+                  ? '已完成對您請求的處理。' 
+                  : '處理請求時出現問題，請查看詳細信息。'
+              }
+
+              // 更新消息為最終結果
+              const enhancedMessage: Message = {
+                ...assistantMessage,
+                content: finalContent,
+                mode: 'agent',
+                model_used: selectedModel,
+                execution_time: result.execution_time,
+                steps_taken: result.steps_taken,
+                execution_trace: result.execution_trace || [],
+                reasoning_steps: result.reasoning_steps || [],
+                tools_used: result.tools_used || []
+              }
+
+              setMessages(prev => prev.map(msg => 
+                msg.id === assistantMessage.id 
+                  ? { ...enhancedMessage, sessionId: processingSessionId }
+                  : msg
+              ))
+
+              // 更新 Agent 狀態為完成 - 同時更新 messageId 和 sessionId
+              setAgentStatus(prev => {
+                const completedStatus = {
+                  ...prev[assistantMessage.id],
+                  currentStep: 'completed',
+                  totalSteps: result.steps_taken || prev[assistantMessage.id]?.totalSteps || 0,
+                  isReflecting: false,
+                  toolsInUse: (result.tools_used || []).map((tool: any) => tool.name),
+                  memoryActive: enableMemory
+                }
+                return {
+                  ...prev,
+                  [assistantMessage.id]: completedStatus,
+                  [sessionId]: completedStatus  // 也用 sessionId 更新
+                }
+              })
+
+              // 保存原始響應
+              setRawResponses(prev => {
+                const newResponses = { ...prev, [assistantMessage.id]: result }
+                const responseIds = Object.keys(newResponses)
+                if (responseIds.length > 20) {
+                  const idsToKeep = responseIds.slice(-20)
+                  const filteredResponses: {[key: string]: any} = {}
+                  idsToKeep.forEach(id => { filteredResponses[id] = newResponses[id] })
+                  return filteredResponses
+                }
+                return newResponses
+              })
+
+              // 新會話重新加載標題
+              if (isNewSession) {
+                setTimeout(async () => {
+                  try {
+                    await loadUserSessionsFromAPI()
+                  } catch (error) {
+                    console.warn('⚠️ Failed to reload sessions:', error)
                   }
-                };
-              });
-            }, enableReflection ? 2000 : 1000);
-            
-          }, 1000);
-          
-        }, 4500);
-        statusTimers[msgId].push(timer3);
-        
-        // 最终步骤：完成处理
-        const timer4 = setTimeout(() => {
-          setAgentStatus(prev => ({
-            ...prev,
-            [msgId]: {
-              ...prev[msgId],
-              currentStep: '生成响应...',
-              totalSteps: 5
+                }, 1000)
+              }
+
+              toast.success('Agent 響應已收到')
+            },
+
+            // 處理錯誤
+            onError: (error) => {
+              console.error('❌ Agent stream error:', error)
+              
+              const errorContent = `❌ Agent 請求失敗\n\n錯誤詳情：${error.message}`
+              
+              setMessages(prev => prev.map(msg => 
+                msg.id === assistantMessage.id 
+                  ? { ...msg, content: errorContent, error_details: { error: error.message } }
+                  : msg
+              ))
+
+              setAgentStatus(prev => ({
+                ...prev,
+                [assistantMessage.id]: {
+                  ...prev[assistantMessage.id],
+                  currentStep: 'error',
+                  isReflecting: false
+                }
+              }))
+
+              toast.error('Agent 請求失敗')
             }
-          }));
-        }, 6000);
-        statusTimers[msgId].push(timer4);
-        
-        // 清理函数：如果请求被取消，清除所有定时器
-        return () => {
-          if (statusTimers[msgId]) {
-            statusTimers[msgId].forEach(timer => clearTimeout(timer));
-            delete statusTimers[msgId];
           }
-        };
-      }
-      
-      // 直接处理响应内容，不使用setTimeout延迟
-      try {
-        // 检查当前活动会话是否仍然是发送请求的会话
-        const isStillActiveSession = currentChatId === processingSessionId
-        console.log('🔍 Processing response for session:', processingSessionId, 'Current active session:', currentChatId, 'Still active:', isStillActiveSession)
+        )
+
+      } else {
+        // ============================================================
+        // Chat 模式 - 使用傳統 POST 請求
+        // ============================================================
+        console.log('💬 Using Chat POST mode')
+        const endpoint = `${API_BASE_URL}/chat/completions`
         
-        const assistantContent = parseApiResponse(data, useAgent)
+        const data = await makeApiRequest(endpoint, body)
         
-        // 确保 assistantContent 是字符串并且不为空
+        const apiEndTime = performance.now()
+        const apiResponseTime = apiEndTime - apiStartTime
+
+        const assistantContent = parseApiResponse(data, false)
+        
         let finalContent = typeof assistantContent === 'string' 
           ? assistantContent 
           : JSON.stringify(assistantContent)
         
-        // 如果内容为空或只是空白字符，使用默认消息
         if (!finalContent || finalContent.trim() === '') {
-          finalContent = data.success ? 
-            '已完成对您请求的处理，但无法生成详细回复。' : 
-            '处理请求时出现问题，请查看详细信息。'
-          console.warn('⚠️ Empty response content, using fallback message')
+          finalContent = '已完成對您請求的處理。'
         }
         
-        console.log('📝 Final content to display:', finalContent.substring(0, 100), '...')
-        
-        // 增强消息数据，添加Agent模式的详细信息
         const enhancedMessage: Message = {
           ...assistantMessage,
           content: finalContent,
-          // 模式增强信息（後端優先，前端fallback）
-          mode: data.mode || (useAgent ? 'agent' : 'llm'),
-          model_used: data.model_used || selectedModel,
-          execution_time: data.execution_time,
-          steps_taken: data.steps_taken,
-          generated_image: data.generated_image || data.image_data_uri,
-          execution_trace: data.execution_trace || [],
-          reasoning_steps: data.reasoning_steps || [],
-          tools_used: data.tools_used || []
+          mode: 'llm',
+          model_used: data.model_used || selectedModel
         }
         
-        // 更新消息内容，但考虑会话ID
-        setMessages(prev => {
-          // 首先过滤掉所有其他会话的消息
-          const filteredPrev = prev.filter(msg => !msg.sessionId || msg.sessionId === processingSessionId);
-          
-          // 创建更新后的消息列表
-          const updatedMessages = filteredPrev.map(msg => 
-            msg.id === assistantMessage.id ? { ...enhancedMessage, sessionId: processingSessionId } : msg
-          );
-          
-          // 如果用户已经切换到其他会话，控制台记录但不影响更新
-          if (currentChatId !== processingSessionId) {
-            console.log('⚠️ User switched to another session. Response added to session:', processingSessionId);
+        setMessages(prev => prev.map(msg => 
+          msg.id === assistantMessage.id 
+            ? { ...enhancedMessage, sessionId: processingSessionId }
+            : msg
+        ))
+
+        setRawResponses(prev => {
+          const newResponses = { ...prev, [assistantMessage.id]: data }
+          const responseIds = Object.keys(newResponses)
+          if (responseIds.length > 20) {
+            const idsToKeep = responseIds.slice(-20)
+            const filteredResponses: {[key: string]: any} = {}
+            idsToKeep.forEach(id => { filteredResponses[id] = newResponses[id] })
+            return filteredResponses
           }
-          
-          console.log('✅ Message content updated successfully for session:', processingSessionId)
-          return updatedMessages;
+          return newResponses
         })
-          
-          // 更新增强的消息统计信息
-          setMessageStats(prev => ({
-            ...prev,
-            [assistantMessage.id]: {
-              processingTime: data.execution_time || apiResponseTime / 1000,
-              tokenCount: data.usage?.total_tokens || 0,
-              modelUsed: selectedModel,
-              toolsCount: (data.execution_trace || []).filter((trace: any) => 
-                trace.action && trace.action !== 'thinking' && trace.action !== 'responding'
-              ).length,
-              memoryUsed: useAgent ? enableMemory : false,
-              mcpToolsUsed: useAgent && enableMcp ? (data.tools_used || []).map((tool: any) => tool.name) : [],
-              responseSize: JSON.stringify(data).length
+
+        if (isNewSession) {
+          setTimeout(async () => {
+            try {
+              await loadUserSessionsFromAPI()
+            } catch (error) {
+              console.warn('⚠️ Failed to reload sessions:', error)
             }
-          }))
-          
-          // Agent模式状态更新
-          if (useAgent && data.success) {
-            setAgentStatus(prev => ({
-              ...prev,
-              [assistantMessage.id]: {
-                currentStep: 'completed',
-                totalSteps: data.steps_taken || 0,
-                isReflecting: enableReflection && (data.reasoning_steps || []).some((step: any) => step.type === 'reflection'),
-                toolsInUse: (data.tools_used || []).map((tool: any) => tool.name),
-                memoryActive: enableMemory
-              }
-            }))
-          }
-          
-          // 保存原始响应数据用于调试 (限制数量防止内存泄漏)
-          setRawResponses(prev => {
-            const newResponses = {
-              ...prev,
-              [assistantMessage.id]: data
-            }
-            
-            // 只保留最近20条响应，防止内存泄漏
-            const responseIds = Object.keys(newResponses)
-            if (responseIds.length > 20) {
-              const idsToKeep = responseIds.slice(-20) // 保留最新的20条
-              const filteredResponses: {[key: string]: any} = {}
-              idsToKeep.forEach(id => {
-                filteredResponses[id] = newResponses[id]
-              })
-              return filteredResponses
-            }
-            
-            return newResponses
-          })
-          
-          // 如果是新會話且收到回覆，重新生成智能標題
-          if (isNewSession) {
-            console.log('🔄 Generating smart title for new session...')
-            setTimeout(async () => {
-              try {
-                await loadUserSessionsFromAPI()
-                console.log('✅ Sessions reloaded with AI-generated title')
-              } catch (error) {
-                console.warn('⚠️ Failed to reload sessions after title generation:', error)
-              }
-            }, 1000) // 1秒延遲，給後端時間生成標題
-          }
-          
-        } catch (parseError) {
-          console.error('❌ Error parsing response:', parseError)
-          setMessages(prev => {
-            // 首先过滤掉所有其他会话的消息
-            const filteredPrev = prev.filter(msg => !msg.sessionId || msg.sessionId === processingSessionId);
-            // 然后更新特定消息
-            return filteredPrev.map(msg => 
-              msg.id === assistantMessage.id 
-                ? { ...msg, content: '响应解析失败，请查看原始JSON', sessionId: processingSessionId }
-                : msg
-            );
-          })
-          
-          // 更新失败统计
-          setLlmStats(prev => ({
-            ...prev,
-            failureCount: prev.failureCount + 1,
-            successRate: ((prev.successRate * (prev.totalCalls - 1))) / prev.totalCalls
-          }))
+          }, 1000)
         }
-      
+
+        toast.success('聊天響應已收到')
+      }
+
       console.log('✅ Message sent successfully to session:', sessionId)
-      toast.success(`${useAgent ? 'Agent' : '聊天'}響應已收到`)
         } catch (error) {
       console.error('❌ Error sending message:', error)
       
@@ -2418,7 +2261,6 @@ export default function ModernChatGPT() {
         // Agent基础功能配置
         enable_memory: enableMemory,
         enable_reflection: enableReflection,
-        enable_react_mode: enableReactMode,
         enable_mcp: enableMcp,
         
         // 工具配置
@@ -2428,7 +2270,7 @@ export default function ModernChatGPT() {
         },
         
         // 高级Agent配置
-        max_steps: useAgent ? 10 : undefined, // 可配置的最大步骤数
+        max_steps: 10, // 可配置的最大步骤数
         system_prompt_override: undefined, // 可选的系统提示覆盖
         
         // 上下文增强
@@ -2685,6 +2527,95 @@ export default function ModernChatGPT() {
       console.error(`❌ API request failed:`, error)
       requestManager.finishRequest()
       throw error
+    }
+  }
+
+  /**
+   * Agent 模式專用的 SSE 流式請求處理函數
+   * 使用 Server-Sent Events 進行實時數據傳輸
+   */
+  const makeAgentStreamRequest = async (
+    body: any,
+    assistantMessageId: string,
+    sessionId: string,
+    callbacks: {
+      onStep: (step: any) => void,
+      onFinal: (result: any) => void,
+      onError: (error: Error) => void
+    }
+  ): Promise<void> => {
+    const controller = requestManager.startRequest()
+    
+    try {
+      console.log('🚀 Starting Agent SSE stream request')
+      console.log('📦 Request body:', JSON.stringify(body, null, 2))
+
+      const response = await fetch('/api/agent/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': API_KEY,
+          'Accept': 'text/event-stream',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`API請求失敗: ${response.status} - ${errorText}`)
+      }
+
+      if (!response.body) {
+        throw new Error('回應體為空')
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        
+        if (done) {
+          console.log('✅ SSE stream ended')
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              console.log('📨 SSE Event:', data.status, data.message?.substring(0, 50))
+
+              if (data.is_final) {
+                callbacks.onFinal(data)
+              } else if (data.status === 'error') {
+                callbacks.onError(new Error(data.message))
+              } else {
+                // 中間步驟 - 直接調用，Edge Runtime 會確保每個 chunk 立即發送
+                callbacks.onStep(data)
+              }
+            } catch (parseError) {
+              console.warn('⚠️ Failed to parse SSE:', parseError)
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('🛑 Agent stream request was cancelled')
+        callbacks.onError(new Error('請求已取消'))
+      } else {
+        console.error('❌ Agent stream request failed:', error)
+        callbacks.onError(error)
+      }
+    } finally {
+      requestManager.finishRequest()
     }
   }
 
@@ -3063,7 +2994,7 @@ export default function ModernChatGPT() {
       }
     }
   }, [messages.length, currentChatId, isLoadingHistory]) // 添加 isLoadingHistory 依賴  // 新增状态管理
-  const [currentPage, setCurrentPage] = useState<'chat' | 'search' | 'files'>('chat')
+  const [currentPage, setCurrentPage] = useState<'chat' | 'files'>('chat')
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<any[]>([])
@@ -3217,8 +3148,6 @@ export default function ModernChatGPT() {
         setEnableMemory={setEnableMemory}
         enableReflection={enableReflection}
         setEnableReflection={setEnableReflection}
-        enableReactMode={enableReactMode}
-        setEnableReactMode={setEnableReactMode}
         disableHistory={disableHistory}
         setDisableHistory={setDisableHistory}
         compactMode={compactMode}
@@ -3245,12 +3174,6 @@ export default function ModernChatGPT() {
         setShowToolDetails={setShowToolDetails}
         fileStats={fileStats}
         setFileStats={setFileStats}
-        searchResults={searchResults}
-        setSearchResults={setSearchResults}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        isSearching={isSearching}
-        searchChatHistory={searchChatHistory}
         chatHistory={chatHistory}
         loadChat={loadChat}
         setCurrentPage={setCurrentPage}
@@ -3405,7 +3328,7 @@ const processImageUrl = (src: string): string => {
 };
 
 // 優化的圖片組件 - 使用記憶化和懶加載防止頁面滾動時的閃爍
-const ImageComponent = React.memo((props: React.ImgHTMLAttributes<HTMLImageElement>): React.ReactElement | null => {
+const ImageComponent = React.memo(function ImageComponent(props: React.ImgHTMLAttributes<HTMLImageElement>): React.ReactElement | null {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string>('');
   const imgRef = useRef<HTMLImageElement>(null);

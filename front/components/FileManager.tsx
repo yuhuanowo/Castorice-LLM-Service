@@ -1,23 +1,21 @@
 'use client'
 
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { 
-  Search, Plus, FileText, Image, Loader, Eye, ArrowDown, Trash2, 
-  Upload, FolderOpen, Grid3X3, List, Filter, SortAsc, SortDesc,
-  Download, Share2, Star, Clock, FileType, Info, X, Maximize2,
+  Search, FileText, Image, Loader2, Eye, Trash2, 
+  Upload, FolderOpen, LayoutGrid, List, Filter, 
+  Download, Star, Clock, FileType, X, 
   ZoomIn, ZoomOut, RotateCw, ChevronLeft, ChevronRight, Play,
-  Volume2, VolumeX, Pause, Copy, Edit3, Tag, Archive, RefreshCw,
-  MoreHorizontal, CheckCircle2, AlertCircle, XCircle
+  Volume2, VolumeX, Pause, Copy, MoreHorizontal, Check,
+  HardDrive, Images, FileVideo, FileAudio, FileArchive, FileCode,
+  RefreshCw, Maximize2, CloudUpload, AlertCircle, ArrowUpDown
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
-import { Separator } from '@/components/ui/separator'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -140,59 +138,60 @@ interface PreviewModalProps {
   apiKey: string
 }
 
-// 檔案類型分類 - 簡化顏色
+// 檔案類型分類 - 簡潔統一配色
 const FILE_TYPES = {
   image: {
     extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'],
-    icon: Image,
-    color: 'bg-slate-500',
+    icon: Images,
+    color: 'text-primary',
+    bgColor: 'bg-primary/10',
     label: '圖片'
   },
   document: {
     extensions: ['pdf', 'doc', 'docx', 'txt', 'rtf', 'odt'],
     icon: FileText,
-    color: 'bg-slate-600',
+    color: 'text-primary',
+    bgColor: 'bg-primary/10',
     label: '文檔'
   },
   video: {
     extensions: ['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv'],
-    icon: Play,
-    color: 'bg-slate-700',
+    icon: FileVideo,
+    color: 'text-primary',
+    bgColor: 'bg-primary/10',
     label: '視頻'
   },
   audio: {
     extensions: ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'],
-    icon: Volume2,
-    color: 'bg-slate-800',
+    icon: FileAudio,
+    color: 'text-primary',
+    bgColor: 'bg-primary/10',
     label: '音頻'
   },
   archive: {
     extensions: ['zip', 'rar', '7z', 'tar', 'gz', 'bz2'],
-    icon: Archive,
-    color: 'bg-gray-500',
+    icon: FileArchive,
+    color: 'text-primary',
+    bgColor: 'bg-primary/10',
     label: '壓縮檔'
   },
   code: {
     extensions: ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'html', 'css', 'scss', 'json', 'xml'],
-    icon: FileType,
-    color: 'bg-gray-600',
+    icon: FileCode,
+    color: 'text-primary',
+    bgColor: 'bg-primary/10',
     label: '代碼'
   }
 }
 
-// 排序選項
-const SORT_OPTIONS = [
-  { value: 'name_asc', label: '名稱 A-Z' },
-  { value: 'name_desc', label: '名稱 Z-A' },
-  { value: 'date_desc', label: '最新上傳' },
-  { value: 'date_asc', label: '最早上傳' },
-  { value: 'size_desc', label: '檔案大小 (大到小)' },
-  { value: 'size_asc', label: '檔案大小 (小到大)' },
-  { value: 'type', label: '檔案類型' }
-]
-
 // 視圖模式
 type ViewMode = 'grid' | 'list'
+
+// 篩選類型
+type FilterType = 'all' | 'image' | 'document' | 'video' | 'audio' | 'archive' | 'code'
+
+// 排序類型
+type SortType = 'date_desc' | 'date_asc' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc'
 
 // 工具函數
 export const formatFileSize = (bytes: number): string => {
@@ -200,7 +199,7 @@ export const formatFileSize = (bytes: number): string => {
   const k = 1024
   const sizes = ['B', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
 export const getFileCategory = (filename: string): string => {
@@ -218,12 +217,15 @@ export const getFileIcon = (fileType: string, filename?: string) => {
   const category = getFileCategory(filename || fileType)
   const config = FILE_TYPES[category as keyof typeof FILE_TYPES]
   const IconComponent = config?.icon || FileText
-  const colorClass = config?.color || 'bg-gray-500'
+  const color = config?.color || 'text-muted-foreground'
+  const bgColor = config?.bgColor || 'bg-muted'
   
   return {
-    icon: <IconComponent className="w-4 h-4" />,
-    color: colorClass,
-    category: config?.label || '其他'
+    icon: <IconComponent className="w-5 h-5" />,
+    color,
+    bgColor,
+    category: config?.label || '其他',
+    IconComponent
   }
 }
 
@@ -233,11 +235,11 @@ export const formatTimeAgo = (timestamp: string): string => {
   const diffInSeconds = Math.floor((now.getTime() - time.getTime()) / 1000)
   
   if (diffInSeconds < 60) return '剛剛'
-  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} 分鐘前`
-  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} 小時前`
-  if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 86400)} 天前`
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}分鐘前`
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}小時前`
+  if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}天前`
   
-  return time.toLocaleDateString('zh-CN')
+  return time.toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' })
 }
 
 export const isImageFile = (filename: string): boolean => {
@@ -331,41 +333,36 @@ const TooltipButton = ({
   onClick, 
   className, 
   variant = "ghost" as const,
-  size = "sm" as const,
-  disabled = false,
-  ...props 
+  size = "icon" as const,
+  disabled = false
 }: {
   children: React.ReactNode
   tooltip: string
   onClick?: (e?: React.MouseEvent<HTMLButtonElement>) => void
   className?: string
-  variant?: "default" | "secondary" | "ghost" | "outline"
+  variant?: "default" | "secondary" | "ghost" | "outline" | "destructive"
   size?: "sm" | "default" | "lg" | "icon"
   disabled?: boolean
-  [key: string]: any
-}) => {
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant={variant}
-            size={size}
-            onClick={onClick}
-            className={className}
-            disabled={disabled}
-            {...props}
-          >
-            {children}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          <p>{tooltip}</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  )
-}
+}) => (
+  <TooltipProvider delayDuration={200}>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant={variant}
+          size={size}
+          onClick={onClick}
+          className={cn("transition-all", className)}
+          disabled={disabled}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
+  </TooltipProvider>
+)
 
 // 增強的圖片預覽組件
 const ImagePreview = ({ 
@@ -404,7 +401,7 @@ const ImagePreview = ({
     return (
       <div className="flex flex-col items-center justify-center h-full space-y-4">
         <div className="w-24 h-24 rounded-full bg-red-500/20 flex items-center justify-center">
-          <XCircle className="w-12 h-12 text-red-400" />
+          <AlertCircle className="w-12 h-12 text-red-400" />
         </div>
         <div className="text-center">
           <h3 className="text-lg font-medium text-white mb-2">圖片載入失敗</h3>
@@ -419,7 +416,7 @@ const ImagePreview = ({
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
           <div className="flex flex-col items-center gap-3">
-            <Loader className="w-8 h-8 text-white animate-spin" />
+            <Loader2 className="w-8 h-8 text-white animate-spin" />
             <p className="text-white text-sm">載入圖片中...</p>
           </div>
         </div>
@@ -464,7 +461,7 @@ const PdfPreview = ({
     return (
       <div className="flex items-center justify-center h-full">
         <div className="flex flex-col items-center gap-3">
-          <Loader className="w-8 h-8 text-white animate-spin" />
+          <Loader2 className="w-8 h-8 text-white animate-spin" />
           <p className="text-white text-sm">載入 PDF 中...</p>
         </div>
       </div>
@@ -475,7 +472,7 @@ const PdfPreview = ({
     return (
       <div className="flex flex-col items-center justify-center h-full space-y-4">
         <div className="w-24 h-24 rounded-full bg-red-500/20 flex items-center justify-center">
-          <XCircle className="w-12 h-12 text-red-400" />
+          <AlertCircle className="w-12 h-12 text-red-400" />
         </div>
         <div className="text-center">
           <h3 className="text-lg font-medium text-white mb-2">PDF 載入失敗</h3>
@@ -490,7 +487,7 @@ const PdfPreview = ({
       {iframeLoading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
           <div className="flex flex-col items-center gap-3">
-            <Loader className="w-8 h-8 text-white animate-spin" />
+            <Loader2 className="w-8 h-8 text-white animate-spin" />
             <p className="text-white text-sm">載入 PDF 中...</p>
           </div>
         </div>
@@ -545,7 +542,7 @@ const TextPreview = ({
     return (
       <div className="flex items-center justify-center h-full">
         <div className="flex flex-col items-center gap-3">
-          <Loader className="w-8 h-8 text-white animate-spin" />
+          <Loader2 className="w-8 h-8 text-white animate-spin" />
           <p className="text-white text-sm">載入文本中...</p>
         </div>
       </div>
@@ -556,7 +553,7 @@ const TextPreview = ({
     return (
       <div className="flex flex-col items-center justify-center h-full space-y-4">
         <div className="w-24 h-24 rounded-full bg-red-500/20 flex items-center justify-center">
-          <XCircle className="w-12 h-12 text-red-400" />
+          <AlertCircle className="w-12 h-12 text-red-400" />
         </div>
         <div className="text-center">
           <h3 className="text-lg font-medium text-white mb-2">文本載入失敗</h3>
@@ -653,7 +650,7 @@ const TextPreview = ({
         
         {filteredLines.length === 0 && searchTerm && (
           <div className="text-center text-white/50 py-8">
-            未找到匹配 "{searchTerm}" 的內容
+            未找到匹配 &ldquo;{searchTerm}&rdquo; 的內容
           </div>
         )}
       </div>
@@ -1458,7 +1455,7 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
             />
           ) : (
             <div className="flex flex-col items-center justify-center h-full w-full">
-              <Loader className="w-8 h-8 text-white animate-spin mb-2" />
+              <Loader2 className="w-8 h-8 text-white animate-spin mb-2" />
               <span className="text-white/80">圖片載入中...</span>
             </div>
           )}
@@ -1567,7 +1564,7 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
         return (
           <div className="flex items-center justify-center h-full">
             <div className="flex flex-col items-center gap-3">
-              <Loader className="w-8 h-8 text-white animate-spin" />
+              <Loader2 className="w-8 h-8 text-white animate-spin" />
               <p className="text-white text-sm">載入視頻中...</p>
             </div>
           </div>
@@ -1578,7 +1575,7 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
         return (
           <div className="flex flex-col items-center justify-center h-full space-y-4">
             <div className="w-24 h-24 rounded-full bg-red-500/20 flex items-center justify-center">
-              <XCircle className="w-12 h-12 text-red-400" />
+              <AlertCircle className="w-12 h-12 text-red-400" />
             </div>
             <div className="text-center">
               <h3 className="text-lg font-medium text-white mb-2">視頻載入失敗</h3>
@@ -1624,7 +1621,7 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
         return (
           <div className="flex items-center justify-center h-full">
             <div className="flex flex-col items-center gap-3">
-              <Loader className="w-8 h-8 text-white animate-spin" />
+              <Loader2 className="w-8 h-8 text-white animate-spin" />
               <p className="text-white text-sm">載入音頻中...</p>
             </div>
           </div>
@@ -1635,7 +1632,7 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
         return (
           <div className="flex flex-col items-center justify-center h-full space-y-4">
             <div className="w-24 h-24 rounded-full bg-red-500/20 flex items-center justify-center">
-              <XCircle className="w-12 h-12 text-red-400" />
+              <AlertCircle className="w-12 h-12 text-red-400" />
             </div>
             <div className="text-center">
               <h3 className="text-lg font-medium text-white mb-2">音頻載入失敗</h3>
@@ -1691,26 +1688,24 @@ const PreviewModal = ({ file, isOpen, onClose, onNext, onPrev, hasNext, hasPrev,
     }
     
     // 其他檔案類型顯示檔案資訊
+    const fileIconInfo = getFileIcon(file.file_type || '', file.filename);
     return (
       <div className="flex flex-col items-center justify-center h-full space-y-8">
         <motion.div 
           className={cn(
-            "w-48 h-48 rounded-2xl flex items-center justify-center shadow-2xl relative",
-            getFileIcon(file.file_type || '', file.filename).color
+            "w-40 h-40 rounded-2xl flex items-center justify-center relative",
+            fileIconInfo.bgColor
           )}
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.3 }}
         >
-          <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent rounded-2xl" />
-          <div className="text-white text-6xl relative z-10">
-            {getFileIcon(file.file_type || '', file.filename).icon}
-          </div>
+          <fileIconInfo.IconComponent className={cn("w-20 h-20", fileIconInfo.color)} />
         </motion.div>
         
         <div className="text-center space-y-4 max-w-2xl">
-          <h3 className="text-3xl font-medium text-white">{file.filename}</h3>
-          <div className="flex items-center justify-center gap-4 text-white/70 text-lg">
+          <h3 className="text-2xl font-medium text-white">{file.filename}</h3>
+          <div className="flex items-center justify-center gap-4 text-white/70 text-base">
             <Badge variant="secondary" className="bg-white/10 text-white border-white/20 px-3 py-1">
               {category}
             </Badge>
@@ -2011,24 +2006,25 @@ export const FileManager = ({
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [sortBy, setSortBy] = useState('date_desc')
-  const [filterType, setFilterType] = useState('all')
+  const [sortBy, setSortBy] = useState<SortType>('date_desc')
+  const [filterType, setFilterType] = useState<FilterType>('all')
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null)
   const [showPreview, setShowPreview] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const dropZoneRef = useRef<HTMLDivElement>(null)
 
   // 組件卸載時清理所有 blob URL
   useEffect(() => {
     return () => {
-      // 清理所有創建的 blob URL，防止內存泄漏
       SafeBlobManager.revokeAll()
     }
   }, [])
 
-  // 计算统计信息的工具函数
-  const calculateStats = (fileList: FileItem[]): FileStats => {
+  // 計算統計資訊
+  const calculateStats = useCallback((fileList: FileItem[]): FileStats => {
     const totalSize = fileList.reduce((sum, file) => sum + (file.file_size || 0), 0)
     const types: Record<string, number> = {}
     
@@ -2045,51 +2041,47 @@ export const FileManager = ({
     }).length
     
     return { total: fileList.length, size: totalSize, types, recent }
-  }
+  }, [])
 
-  // 加载文件列表
-  const loadFiles = async () => {
+  // 載入檔案列表
+  const loadFiles = useCallback(async () => {
     setLoading(true)
     try {
       const response = await fetch(`${apiBaseUrl}/files?page_size=1000`, {
         headers: { 
-              'X-API-KEY': apiKey,
-              'Accept': '*/*'
-            },
-            mode: 'cors', // 明确指定 CORS 模式
-            credentials: 'omit', // 不发送 cookies
+          'X-API-KEY': apiKey,
+          'Accept': '*/*'
+        },
+        mode: 'cors',
+        credentials: 'omit',
       })
       if (response.ok) {
         const fileList = await response.json()
         setFiles(fileList)
-        
-        // 更新统计
-        const stats = calculateStats(fileList)
-        onStatsUpdate(stats)
+        onStatsUpdate(calculateStats(fileList))
       } else {
-        toast.error('加载文件列表失败')
+        toast.error('載入檔案失敗')
       }
     } catch (error) {
       console.error('Error loading files:', error)
-      toast.error('加载文件失败')
+      toast.error('載入檔案失敗')
     } finally {
       setLoading(false)
     }
-  }
+  }, [apiBaseUrl, apiKey, onStatsUpdate, calculateStats])
 
-  // 上传文件
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = event.target.files
-    if (!selectedFiles || selectedFiles.length === 0) return
+  // 上傳檔案
+  const uploadFiles = useCallback(async (fileList: FileList | File[]) => {
+    if (!fileList || fileList.length === 0) return
 
     setUploading(true)
-    const toastId = toast.loading(`正在上传 ${selectedFiles.length} 个文件...`)
+    const toastId = toast.loading(`正在上傳 ${fileList.length} 個檔案...`)
     
     try {
       let successCount = 0
+      const filesArray = Array.from(fileList)
       
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i]
+      for (const file of filesArray) {
         const formData = new FormData()
         formData.append('file', file)
         formData.append('description', `Uploaded ${file.name}`)
@@ -2097,67 +2089,81 @@ export const FileManager = ({
         const response = await fetch(`${apiBaseUrl}/files/upload`, {
           method: 'POST',
           headers: { 
-              'X-API-KEY': apiKey,
-              'Accept': '*/*'
-            },
-            mode: 'cors', // 明确指定 CORS 模式
-            credentials: 'omit', // 不发送 cookies
+            'X-API-KEY': apiKey,
+            'Accept': '*/*'
+          },
+          mode: 'cors',
+          credentials: 'omit',
           body: formData
         })
 
-        if (response.ok) {
-          successCount++
-        } else {
-          console.error(`上传 ${file.name} 失败`)
-        }
+        if (response.ok) successCount++
       }
       
-      toast.success(`成功上传 ${successCount} 个文件`, { id: toastId })
+      toast.success(`成功上傳 ${successCount} 個檔案`, { id: toastId })
       loadFiles()
     } catch (error) {
       console.error('Upload error:', error)
-      toast.error('文件上传失败', { id: toastId })
+      toast.error('上傳失敗', { id: toastId })
     } finally {
       setUploading(false)
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
+      if (fileInputRef.current) fileInputRef.current.value = ''
     }
+  }, [apiBaseUrl, apiKey, loadFiles])
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files) uploadFiles(event.target.files)
   }
 
-  // 删除文件
-  const deleteFile = async (fileId: string) => {
+  // 拖放處理
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(true)
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+    if (e.dataTransfer.files) uploadFiles(e.dataTransfer.files)
+  }, [uploadFiles])
+
+  // 刪除檔案
+  const deleteFile = useCallback(async (fileId: string) => {
     try {
       const response = await fetch(`${apiBaseUrl}/files/${fileId}`, {
         method: 'DELETE',
         headers: { 
-              'X-API-KEY': apiKey,
-              'Accept': '*/*'
-            },
-            mode: 'cors', // 明确指定 CORS 模式
-            credentials: 'omit', // 不发送 cookies
+          'X-API-KEY': apiKey,
+          'Accept': '*/*'
+        },
+        mode: 'cors',
+        credentials: 'omit',
       })
       
       if (response.ok) {
-        toast.success('文件删除成功')
+        toast.success('已刪除')
         loadFiles()
       } else {
-        toast.error('文件删除失败')
+        toast.error('刪除失敗')
       }
     } catch (error) {
       console.error('Delete error:', error)
-      toast.error('文件删除失败')
+      toast.error('刪除失敗')
     }
-  }
+  }, [apiBaseUrl, apiKey, loadFiles])
 
-  // 批量删除
-  const deleteSelectedFiles = async () => {
+  // 批量刪除
+  const deleteSelectedFiles = useCallback(async () => {
     if (selectedFiles.size === 0) return
     
-    const confirmed = confirm(`确定删除选中的 ${selectedFiles.size} 个文件吗？`)
-    if (!confirmed) return
+    if (!confirm(`確定刪除選中的 ${selectedFiles.size} 個檔案嗎？`)) return
     
-    const toastId = toast.loading('正在删除文件...')
+    const toastId = toast.loading('正在刪除...')
     try {
       let successCount = 0
       
@@ -2165,36 +2171,34 @@ export const FileManager = ({
         const response = await fetch(`${apiBaseUrl}/files/${fileId}`, {
           method: 'DELETE',
           headers: { 
-              'X-API-KEY': apiKey,
-              'Accept': '*/*'
-            },
-            mode: 'cors', // 明确指定 CORS 模式
-            credentials: 'omit', // 不发送 cookies
+            'X-API-KEY': apiKey,
+            'Accept': '*/*'
+          },
+          mode: 'cors',
+          credentials: 'omit',
         })
         
-        if (response.ok) {
-          successCount++
-        }
+        if (response.ok) successCount++
       }
       
-      toast.success(`成功删除 ${successCount} 个文件`, { id: toastId })
+      toast.success(`已刪除 ${successCount} 個檔案`, { id: toastId })
       setSelectedFiles(new Set())
       loadFiles()
     } catch (error) {
-      toast.error('批量删除失败', { id: toastId })
+      toast.error('批量刪除失敗', { id: toastId })
     }
-  }
+  }, [selectedFiles, apiBaseUrl, apiKey, loadFiles])
 
-  // 下载文件
-  const downloadFile = async (fileId: string, filename: string) => {
+  // 下載檔案
+  const downloadFile = useCallback(async (fileId: string, filename: string) => {
     try {
       const response = await fetch(`${apiBaseUrl}/files/${fileId}`, {
         headers: { 
-              'X-API-KEY': apiKey,
-              'Accept': '*/*'
-            },
-            mode: 'cors', // 明确指定 CORS 模式
-            credentials: 'omit', // 不发送 cookies
+          'X-API-KEY': apiKey,
+          'Accept': '*/*'
+        },
+        mode: 'cors',
+        credentials: 'omit',
       })
       
       if (response.ok) {
@@ -2205,306 +2209,400 @@ export const FileManager = ({
         a.download = filename
         a.click()
         URL.revokeObjectURL(url)
-        toast.success('文件下载成功')
+        toast.success('下載完成')
       } else {
-        toast.error('文件下载失败')
+        toast.error('下載失敗')
       }
     } catch (error) {
       console.error('Download error:', error)
-      toast.error('文件下载失败')
+      toast.error('下載失敗')
     }
-  }
+  }, [apiBaseUrl, apiKey])
 
-  // 预览文件
-  const previewFileHandler = (file: FileItem) => {
+  // 預覽檔案
+  const previewFileHandler = useCallback((file: FileItem) => {
     setPreviewFile(file)
     setShowPreview(true)
-  }
+  }, [])
 
-  // 获取下一个/上一个文件
-  const getAdjacentFiles = (currentFile: FileItem) => {
+  // 排序和過濾邏輯
+  const filteredAndSortedFiles = useMemo(() => {
+    return files
+      .filter(file => {
+        if (!file.file_id || file.file_id.trim() === '') return false
+        
+        const searchMatch = file.filename?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           file.description?.toLowerCase().includes(searchQuery.toLowerCase())
+        const typeMatch = filterType === 'all' || getFileCategory(file.filename) === filterType
+        
+        return searchMatch && typeMatch
+      })
+      .reduce((unique: FileItem[], file) => {
+        if (!unique.find(f => f.file_id === file.file_id)) unique.push(file)
+        return unique
+      }, [])
+      .sort((a, b) => {
+        switch (sortBy) {
+          case 'name_asc':
+            return a.filename.localeCompare(b.filename)
+          case 'name_desc':
+            return b.filename.localeCompare(a.filename)
+          case 'date_asc':
+            return new Date(a.upload_time).getTime() - new Date(b.upload_time).getTime()
+          case 'date_desc':
+            return new Date(b.upload_time).getTime() - new Date(a.upload_time).getTime()
+          case 'size_asc':
+            return (a.file_size || 0) - (b.file_size || 0)
+          case 'size_desc':
+            return (b.file_size || 0) - (a.file_size || 0)
+          default:
+            return 0
+        }
+      })
+  }, [files, searchQuery, filterType, sortBy])
+
+  // 獲取下一個/上一個檔案
+  const getAdjacentFiles = useCallback((currentFile: FileItem) => {
     const currentIndex = filteredAndSortedFiles.findIndex(f => f.file_id === currentFile.file_id)
     return {
       prev: currentIndex > 0 ? filteredAndSortedFiles[currentIndex - 1] : null,
       next: currentIndex < filteredAndSortedFiles.length - 1 ? filteredAndSortedFiles[currentIndex + 1] : null
     }
-  }
+  }, [filteredAndSortedFiles])
 
-  // 排序和过滤逻辑
-  const filteredAndSortedFiles = files
-    .filter(file => {
-      // 确保文件有有效的 ID
-      if (!file.file_id || file.file_id.trim() === '') {
-        console.warn('发现没有有效 file_id 的文件:', file)
-        return false
-      }
-      
-      // 搜索过滤
-      const searchMatch = file.filename?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         file.description?.toLowerCase().includes(searchQuery.toLowerCase())
-      
-      // 类型过滤
-      const typeMatch = filterType === 'all' || getFileCategory(file.filename) === filterType
-      
-      return searchMatch && typeMatch
-    })
-    // 去重：移除重复的 file_id
-    .reduce((uniqueFiles: FileItem[], currentFile) => {
-      const existingFileIndex = uniqueFiles.findIndex(f => f.file_id === currentFile.file_id)
-      if (existingFileIndex === -1) {
-        uniqueFiles.push(currentFile)
-      } else {
-        console.warn('发现重复的 file_id:', currentFile.file_id)
-      }
-      return uniqueFiles
-    }, [])
-    .sort((a, b) => {
-      switch (sortBy) {
-        case 'name_asc':
-          return a.filename.localeCompare(b.filename)
-        case 'name_desc':
-          return b.filename.localeCompare(a.filename)
-        case 'date_asc':
-          return new Date(a.upload_time).getTime() - new Date(b.upload_time).getTime()
-        case 'date_desc':
-          return new Date(b.upload_time).getTime() - new Date(a.upload_time).getTime()
-        case 'size_asc':
-          return (a.file_size || 0) - (b.file_size || 0)
-        case 'size_desc':
-          return (b.file_size || 0) - (a.file_size || 0)
-        case 'type':
-          return getFileCategory(a.filename).localeCompare(getFileCategory(b.filename))
-        default:
-          return 0
-      }
-    })
+  // 類型統計
+  const typeStats = useMemo(() => {
+    return files.reduce((acc, file) => {
+      const category = getFileCategory(file.filename)
+      acc[category] = (acc[category] || 0) + 1
+      return acc
+    }, {} as Record<string, number>)
+  }, [files])
 
-  // 获取类型统计
-  const typeStats = files.reduce((acc, file) => {
-    const category = getFileCategory(file.filename)
-    acc[category] = (acc[category] || 0) + 1
-    return acc
-  }, {} as Record<string, number>)
+  // 總大小
+  const totalSize = useMemo(() => {
+    return files.reduce((sum, file) => sum + (file.file_size || 0), 0)
+  }, [files])
 
-  // 组件挂载时加载文件
+  // 組件掛載時載入檔案
   useEffect(() => {
     loadFiles()
-  }, [])
+  }, [loadFiles])
 
   return (
-    <div className="h-full flex flex-col bg-background">
-      {/* 頭部區域 */}
-      <div className="border-b border-border bg-background">
-        <div className="p-4">
-          {/* 標題和操作按鈕 */}
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <FolderOpen className="w-4 h-4 text-primary-foreground" />
+    <div 
+      ref={dropZoneRef}
+      className="h-full flex flex-col bg-background relative"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* 拖放覆蓋層 */}
+      <AnimatePresence>
+        {isDragging && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-4 z-50 bg-card/80 backdrop-blur-xl border-2 border-dashed border-primary/50 rounded-2xl flex items-center justify-center"
+          >
+            <div className="text-center space-y-3">
+              <div className="w-14 h-14 mx-auto bg-primary/10 rounded-xl flex items-center justify-center">
+                <CloudUpload className="w-7 h-7 text-primary" />
               </div>
               <div>
-                <h1 className="text-xl font-semibold">檔案庫</h1>
-                <p className="text-sm text-muted-foreground">
-                  管理和預覽你的文件資源
-                </p>
+                <p className="text-base font-medium text-foreground">放開以上傳檔案</p>
+                <p className="text-sm text-muted-foreground">支援所有常見檔案格式</p>
               </div>
             </div>
-            
-            <div className="flex items-center gap-2">
-              {selectedFiles.size > 0 && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={deleteSelectedFiles}
-                  className="gap-2"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  删除选中 ({selectedFiles.size})
-                </Button>
-              )}
-              
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-              <Button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                size="sm"
-                className="gap-2"
-              >
-                {uploading ? (
-                  <Loader className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Upload className="w-4 h-4" />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 頂部工具列 - 毛玻璃設計 */}
+      <div className="flex-none bg-card/50 backdrop-blur-xl border-b border-border/50 sticky top-0 z-40">
+        <div className="px-4 py-3">
+          <div className="flex items-center gap-3">
+            {/* 搜索框 */}
+            <div className="flex-1 max-w-sm">
+              <div className="relative group">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
+                <input
+                  type="text"
+                  placeholder="搜尋檔案..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full h-9 pl-9 pr-9 text-sm bg-background/50 border border-border/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all placeholder:text-muted-foreground/60"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 )}
-                {uploading ? '上传中...' : '上传文件'}
+              </div>
+            </div>
+
+            {/* 分隔線 */}
+            <div className="h-6 w-px bg-border/50 hidden sm:block" />
+
+            {/* 篩選類型標籤組 */}
+            <div className="hidden md:flex items-center gap-1 bg-muted/50 rounded-lg p-1">
+              <button
+                onClick={() => setFilterType('all')}
+                className={cn(
+                  "px-3 py-1.5 text-xs font-medium rounded-md transition-all",
+                  filterType === 'all' 
+                    ? "bg-background text-foreground shadow-sm" 
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                全部
+              </button>
+              {Object.entries(FILE_TYPES).slice(0, 4).map(([key, config]) => {
+                const count = typeStats[key] || 0
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setFilterType(key as FilterType)}
+                    className={cn(
+                      "px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5",
+                      filterType === key 
+                        ? "bg-background text-foreground shadow-sm" 
+                        : "text-muted-foreground hover:text-foreground",
+                      count === 0 && "opacity-50 cursor-not-allowed"
+                    )}
+                    disabled={count === 0}
+                  >
+                    {config.label}
+                    {count > 0 && <span className="text-[10px] opacity-60">{count}</span>}
+                  </button>
+                )
+              })}
+              
+              {/* 更多篩選 */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground rounded-md transition-all">
+                    <MoreHorizontal className="w-4 h-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-[120px]">
+                  {Object.entries(FILE_TYPES).slice(4).map(([key, config]) => {
+                    const count = typeStats[key] || 0
+                    const IconComponent = config.icon
+                    return (
+                      <DropdownMenuItem 
+                        key={key} 
+                        onClick={() => setFilterType(key as FilterType)}
+                        disabled={count === 0}
+                        className={cn(count === 0 && "opacity-50")}
+                      >
+                        <IconComponent className="w-4 h-4 mr-2" />
+                        {config.label}
+                        {count > 0 && <span className="ml-auto text-xs text-muted-foreground">{count}</span>}
+                      </DropdownMenuItem>
+                    )
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+
+            {/* 移動端篩選下拉 */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild className="md:hidden">
+                <Button variant="outline" size="sm" className="h-9 gap-1.5 border-border/50">
+                  <Filter className="w-3.5 h-3.5" />
+                  {filterType === 'all' ? '全部' : FILE_TYPES[filterType as keyof typeof FILE_TYPES]?.label}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-[140px]">
+                <DropdownMenuItem onClick={() => setFilterType('all')}>
+                  <FolderOpen className="w-4 h-4 mr-2" />
+                  全部
+                  <span className="ml-auto text-xs text-muted-foreground">{files.length}</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {Object.entries(FILE_TYPES).map(([key, config]) => {
+                  const count = typeStats[key] || 0
+                  const IconComponent = config.icon
+                  return (
+                    <DropdownMenuItem 
+                      key={key} 
+                      onClick={() => setFilterType(key as FilterType)}
+                      disabled={count === 0}
+                    >
+                      <IconComponent className="w-4 h-4 mr-2" />
+                      {config.label}
+                      {count > 0 && <span className="ml-auto text-xs text-muted-foreground">{count}</span>}
+                    </DropdownMenuItem>
+                  )
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <div className="flex-1" />
+
+            {/* 批量操作 */}
+            <AnimatePresence>
+              {selectedFiles.size > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className="flex items-center gap-2"
+                >
+                  <span className="text-xs text-muted-foreground hidden sm:inline">
+                    已選 {selectedFiles.size} 項
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={deleteSelectedFiles}
+                    className="h-8 px-3 text-destructive hover:text-destructive hover:bg-destructive/10"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span className="ml-1.5 hidden sm:inline">刪除</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelectedFiles(new Set())}
+                    className="h-8 px-2"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* 排序 */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-9 gap-1.5 text-muted-foreground hover:text-foreground">
+                  <ArrowUpDown className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline text-xs">
+                    {sortBy === 'date_desc' ? '最新' : 
+                     sortBy === 'date_asc' ? '最早' :
+                     sortBy === 'name_asc' ? 'A-Z' :
+                     sortBy === 'name_desc' ? 'Z-A' :
+                     sortBy === 'size_desc' ? '最大' : '最小'}
+                  </span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[140px]">
+                <DropdownMenuItem onClick={() => setSortBy('date_desc')}>
+                  <Check className={cn("w-4 h-4 mr-2", sortBy !== 'date_desc' && "opacity-0")} />
+                  最新上傳
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSortBy('date_asc')}>
+                  <Check className={cn("w-4 h-4 mr-2", sortBy !== 'date_asc' && "opacity-0")} />
+                  最早上傳
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setSortBy('name_asc')}>
+                  <Check className={cn("w-4 h-4 mr-2", sortBy !== 'name_asc' && "opacity-0")} />
+                  名稱 A-Z
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSortBy('name_desc')}>
+                  <Check className={cn("w-4 h-4 mr-2", sortBy !== 'name_desc' && "opacity-0")} />
+                  名稱 Z-A
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setSortBy('size_desc')}>
+                  <Check className={cn("w-4 h-4 mr-2", sortBy !== 'size_desc' && "opacity-0")} />
+                  大小 (大→小)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSortBy('size_asc')}>
+                  <Check className={cn("w-4 h-4 mr-2", sortBy !== 'size_asc' && "opacity-0")} />
+                  大小 (小→大)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* 視圖切換 */}
+            <div className="flex bg-muted/50 rounded-lg p-0.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setViewMode('grid')}
+                className={cn(
+                  "h-7 w-7 p-0 rounded-md",
+                  viewMode === 'grid' && "bg-background shadow-sm"
+                )}
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setViewMode('list')}
+                className={cn(
+                  "h-7 w-7 p-0 rounded-md",
+                  viewMode === 'list' && "bg-background shadow-sm"
+                )}
+              >
+                <List className="w-4 h-4" />
               </Button>
             </div>
-          </div>
 
-          {/* 統計卡片 - 統一簡潔設計 */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
-            <Card className="p-2.5">
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 bg-muted rounded-md flex items-center justify-center">
-                  <FileText className="w-3 h-3 text-muted-foreground" />
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">總數</div>
-                  <div className="text-sm font-semibold">{files.length}</div>
-                </div>
-              </div>
-            </Card>
+            {/* 重新整理 */}
+            <TooltipButton tooltip="重新整理" onClick={loadFiles} className="h-9 w-9">
+              <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
+            </TooltipButton>
             
-            <Card className="p-2.5">
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 bg-muted rounded-md flex items-center justify-center">
-                  <Archive className="w-3 h-3 text-muted-foreground" />
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">總大小</div>
-                  <div className="text-sm font-semibold">
-                    {formatFileSize(files.reduce((sum, file) => sum + (file.file_size || 0), 0))}
-                  </div>
-                </div>
-              </div>
-            </Card>
-            
-            <Card className="p-2.5">
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 bg-muted rounded-md flex items-center justify-center">
-                  <Clock className="w-3 h-3 text-muted-foreground" />
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">本週</div>
-                  <div className="text-sm font-semibold">
-                    {files.filter(file => {
-                      const uploadDate = new Date(file.upload_time)
-                      const weekAgo = new Date()
-                      weekAgo.setDate(weekAgo.getDate() - 7)
-                      return uploadDate > weekAgo
-                    }).length}
-                  </div>
-                </div>
-              </div>
-            </Card>
-            
-            <Card className="p-2.5">
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 bg-muted rounded-md flex items-center justify-center">
-                  <Tag className="w-3 h-3 text-muted-foreground" />
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">類型</div>
-                  <div className="text-sm font-semibold">{Object.keys(typeStats).length}</div>
-                </div>
-              </div>
-            </Card>
-          </div>
-
-          {/* 搜索和過濾工具列 - 緊湊設計 */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-            {/* 搜索框 */}
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="搜索文件..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-8 py-1.5 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-ring focus:border-transparent"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
+            {/* 上傳按鈕 */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <Button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              size="sm"
+              className="h-9 gap-1.5 bg-primary hover:bg-primary/90 shadow-sm"
+            >
+              {uploading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4" />
               )}
-            </div>
-            
-            <div className="flex items-center gap-1.5">
-              {/* 類型過濾 */}
-              <Select value={filterType} onValueChange={setFilterType}>
-                <SelectTrigger className="w-28 h-8 text-xs">
-                  <Filter className="w-3 h-3 mr-1" />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all" key="all">全部</SelectItem>
-                  {Object.entries(FILE_TYPES).map(([key, config]) => (
-                    <SelectItem value={key} key={key}>
-                      {config.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              
-              {/* 排序 */}
-              <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger className="w-32 h-8 text-xs">
-                  <SortDesc className="w-3 h-3 mr-1" />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SORT_OPTIONS.map(option => (
-                    <SelectItem value={option.value} key={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              
-              {/* 視圖模式切換 */}
-              <div className="flex border border-input rounded-md overflow-hidden">
-                <Button
-                  variant={viewMode === 'grid' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setViewMode('grid')}
-                  className="h-8 px-2 rounded-none border-0"
-                >
-                  <Grid3X3 className="w-3 h-3" />
-                </Button>
-                <Button
-                  variant={viewMode === 'list' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setViewMode('list')}
-                  className="h-8 px-2 rounded-none border-0"
-                >
-                  <List className="w-3 h-3" />
-                </Button>
-              </div>
-            </div>
+              <span className="hidden sm:inline">{uploading ? '上傳中' : '上傳'}</span>
+            </Button>
           </div>
+        </div>
 
-          {/* 結果統計 - 簡化 */}
-          <div className="flex items-center justify-between mt-3 pt-3 border-t border-border/50 text-xs text-muted-foreground">
-            <span>
-              共 {filteredAndSortedFiles.length} 個文件
-              {searchQuery && ` · 搜索: "${searchQuery}"`}
+        {/* 狀態欄 */}
+        <div className="px-4 py-2 border-t border-border/30 flex items-center justify-between text-xs text-muted-foreground">
+          <div className="flex items-center gap-4">
+            <span className="flex items-center gap-1.5">
+              <FolderOpen className="w-3.5 h-3.5" />
+              {filteredAndSortedFiles.length} 個檔案
             </span>
-            {filteredAndSortedFiles.length > 0 && (
-              <span>
-                {formatFileSize(filteredAndSortedFiles.reduce((sum, file) => sum + (file.file_size || 0), 0))}
-              </span>
-            )}
+            <span className="flex items-center gap-1.5">
+              <HardDrive className="w-3.5 h-3.5" />
+              {formatFileSize(totalSize)}
+            </span>
           </div>
+          {searchQuery && (
+            <span>
+              搜尋: "{searchQuery}"
+            </span>
+          )}
         </div>
       </div>
 
-      {/* 文件列表區域 - 調整 padding */}
+      {/* 主內容區域 */}
       <div className="flex-1 overflow-y-auto p-4">
         {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="flex items-center gap-2">
-              <Loader className="w-5 h-5 animate-spin" />
-              <span>加載中...</span>
-            </div>
+          <div className="flex flex-col items-center justify-center h-64 gap-3">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <span className="text-sm text-muted-foreground">載入中...</span>
           </div>
         ) : filteredAndSortedFiles.length === 0 ? (
           <motion.div 
@@ -2512,26 +2610,26 @@ export const FileManager = ({
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
           >
-            <div className="w-16 h-16 bg-muted/50 rounded-lg flex items-center justify-center mb-4">
-              <FolderOpen className="w-8 h-8 text-muted-foreground" />
+            <div className="w-16 h-16 bg-muted/50 rounded-2xl flex items-center justify-center mb-4">
+              <FolderOpen className="w-8 h-8 text-muted-foreground/50" />
             </div>
-            <h3 className="text-lg font-medium mb-2">
-              {files.length === 0 ? '暂无文件' : '未找到匹配的文件'}
+            <h3 className="text-base font-medium mb-1">
+              {files.length === 0 ? '尚無檔案' : '找不到符合的檔案'}
             </h3>
-            <p className="text-sm text-muted-foreground text-center max-w-sm">
+            <p className="text-sm text-muted-foreground text-center max-w-xs mb-4">
               {files.length === 0 
-                ? '點擊上方"上傳文件"按鈕開始添加文件'
-                : '嘗試調整搜索關鍵詞或篩選條件'
+                ? '拖放檔案到此處，或點擊上傳按鈕'
+                : '試試調整搜尋或篩選條件'
               }
             </p>
             {files.length === 0 && (
               <Button
                 onClick={() => fileInputRef.current?.click()}
-                className="mt-4 gap-2"
                 size="sm"
+                className="gap-2"
               >
                 <Upload className="w-4 h-4" />
-                立即上傳
+                上傳檔案
               </Button>
             )}
           </motion.div>
@@ -2603,44 +2701,28 @@ const FileGrid = ({
 }) => {
   const { generateThumbnail, isThumbnailLoading, getThumbnail } = useFilePreview(apiBaseUrl, apiKey)
   
-  // 當組件掛載時，為圖片和視頻檔案生成縮圖
+  // 縮圖生成
   useEffect(() => {
-    const generateThumbnailsForVisibleFiles = async () => {
-      if (!apiBaseUrl || !apiKey || files.length === 0) {
-        return
-      }
+    const generateThumbnails = async () => {
+      if (!apiBaseUrl || !apiKey || files.length === 0) return
       
-      // 筛选需要生成缩图的文件，限制数量避免性能问题
       const eligibleFiles = files
-        .filter(file => 
-          isImageFile(file.filename) || 
-          isVideoFile(file.filename) || 
-          file.filename.toLowerCase().endsWith('.pdf')
-        )
-        .slice(0, 10) // 只为前10个文件生成缩图
+        .filter(file => isImageFile(file.filename) || isVideoFile(file.filename) || isPdfFile(file.filename))
+        .slice(0, 12)
       
-      // 使用队列方式处理，避免并发过多请求
-      const batchSize = 2 // 每次最多处理2个文件
-      for (let i = 0; i < eligibleFiles.length; i += batchSize) {
-        const batch = eligibleFiles.slice(i, i + batchSize)
+      for (let i = 0; i < eligibleFiles.length; i += 3) {
+        const batch = eligibleFiles.slice(i, i + 3)
         
-        // 并发处理当前批次
         await Promise.allSettled(
           batch.map(async (file) => {
+            if (getThumbnail(file.file_id) || isThumbnailLoading(file.file_id)) return
+            
             try {
-              // 检查是否已经有缩图或正在处理
-              if (getThumbnail(file.file_id) || isThumbnailLoading(file.file_id)) {
-                return
-              }
-              
               const controller = new AbortController()
               const timeoutId = setTimeout(() => controller.abort(), 8000)
               
               const response = await fetch(`${apiBaseUrl}/files/${file.file_id}`, {
-                headers: { 
-                  'X-API-KEY': apiKey,
-                  'Accept': '*/*'
-                },
+                headers: { 'X-API-KEY': apiKey, 'Accept': '*/*' },
                 mode: 'cors',
                 credentials: 'omit',
                 signal: controller.signal
@@ -2650,32 +2732,25 @@ const FileGrid = ({
               
               if (response.ok) {
                 const blob = await response.blob()
-                if (blob.size > 0) {
-                  await generateThumbnail(file, blob)
-                }
+                if (blob.size > 0) await generateThumbnail(file, blob)
               }
             } catch (error) {
-              // 静默处理错误，避免控制台噪音
-              if ((error as Error)?.name !== 'AbortError') {
-                console.debug(`文件 ${file.filename} 缩图生成跳过:`, (error as Error)?.message)
-              }
+              // 靜默處理
             }
           })
         )
         
-        // 在批次之间添加小延迟，避免过度占用资源
-        if (i + batchSize < eligibleFiles.length) {
+        if (i + 3 < eligibleFiles.length) {
           await new Promise(resolve => setTimeout(resolve, 100))
         }
       }
     }
     
-    // 延迟执行，避免组件初始化时的性能影响
-    const timeoutId = setTimeout(generateThumbnailsForVisibleFiles, 500)
+    const timeoutId = setTimeout(generateThumbnails, 500)
     return () => clearTimeout(timeoutId)
   }, [files, apiBaseUrl, apiKey, generateThumbnail, getThumbnail, isThumbnailLoading])
 
-  const toggleSelection = (fileId: string) => {
+  const toggleSelection = useCallback((fileId: string) => {
     const newSelection = new Set(selectedFiles)
     if (newSelection.has(fileId)) {
       newSelection.delete(fileId)
@@ -2683,52 +2758,27 @@ const FileGrid = ({
       newSelection.add(fileId)
     }
     onSelectionChange(newSelection)
-  }
+  }, [selectedFiles, onSelectionChange])
 
-  const handleSelectAll = () => {
-    if (selectedFiles.size === files.length) {
-      onSelectionChange(new Set())
-    } else {
-      onSelectionChange(new Set(files.map(f => f.file_id)))
-    }
-  }
-
-  // 渲染縮圖的組件
+  // 縮圖組件
   const FileThumbnail = ({ file, size = 'large' }: { file: FileItem; size?: 'large' | 'small' }) => {
-    const { icon, color, category } = getFileIcon(file.file_type || '', file.filename)
+    const { color, bgColor, IconComponent } = getFileIcon(file.file_type || '', file.filename)
     const thumbnail = getThumbnail(file.file_id)
     const isLoading = isThumbnailLoading(file.file_id)
-    const canHaveThumbnail = isImageFile(file.filename) || isVideoFile(file.filename) || file.filename.toLowerCase().endsWith('.pdf')
-    
-    const iconSize = size === 'large' ? 'text-2xl' : 'text-lg'
-    const playIconSize = size === 'large' ? 'w-6 h-6' : 'w-4 h-4'
-    const playPadding = size === 'large' ? 'p-2' : 'p-1'
-    const eyeIconSize = size === 'large' ? 'w-4 h-4' : 'w-3 h-3'
-    const loaderSize = size === 'large' ? 'w-6 h-6' : 'w-4 h-4'
+    const canHaveThumbnail = isImageFile(file.filename) || isVideoFile(file.filename) || isPdfFile(file.filename)
     
     if (canHaveThumbnail && thumbnail) {
       return (
-        <div className="w-full h-full rounded-lg overflow-hidden relative">
+        <div className="w-full h-full rounded-lg overflow-hidden relative bg-muted/30">
           <img
             src={thumbnail}
             alt={file.filename}
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
           />
-          
-          {/* 視頻檔案顯示播放圖標 */}
           {isVideoFile(file.filename) && (
             <div className="absolute inset-0 flex items-center justify-center">
-              <div className={cn("bg-black/50 rounded-full", playPadding)}>
-                <Play className={cn(playIconSize, "text-white fill-current")} />
-              </div>
-            </div>
-          )}
-          
-          {/* 預覽遮罩 - 只在大尺寸時顯示 */}
-          {size === 'large' && (
-            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
-              <div className="bg-white/20 backdrop-blur-sm rounded-full p-2">
-                <Eye className={cn(eyeIconSize, "text-white")} />
+              <div className="w-9 h-9 bg-black/50 backdrop-blur-sm rounded-full flex items-center justify-center">
+                <Play className="w-4 h-4 text-white fill-current ml-0.5" />
               </div>
             </div>
           )}
@@ -2738,359 +2788,262 @@ const FileGrid = ({
     
     if (canHaveThumbnail && isLoading) {
       return (
-        <div className="w-full h-full rounded-lg bg-muted/50 flex items-center justify-center">
-          <Loader className={cn(loaderSize, "text-muted-foreground animate-spin")} />
+        <div className={cn("w-full h-full rounded-lg flex items-center justify-center", bgColor)}>
+          <Loader2 className={cn("w-6 h-6 animate-spin", color)} />
         </div>
       )
     }
     
-    // 默認圖標顯示
     return (
-      <div className={cn("w-full h-full rounded-lg flex items-center justify-center", color)}>
-        <div className={cn("text-white", iconSize)}>{icon}</div>
+      <div className={cn("w-full h-full rounded-lg flex items-center justify-center", bgColor)}>
+        <IconComponent className={cn(color, size === 'large' ? "w-10 h-10" : "w-5 h-5")} />
       </div>
     )
   }
 
+  // 網格視圖
   if (viewMode === 'grid') {
     return (
-      <div className="space-y-4">
-        {/* 全選控制 - 簡化 */}
-        {files.length > 0 && (
-          <motion.div 
-            className="flex items-center justify-between p-3 bg-card border border-border rounded-lg"
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            <div className="flex items-center gap-3">
-              <input
-                type="checkbox"
-                checked={selectedFiles.size === files.length && files.length > 0}
-                onChange={handleSelectAll}
-                className="rounded border-input w-4 h-4"
-              />
-              <Label className="text-sm font-medium">
-                {selectedFiles.size > 0 ? (
-                  <span className="text-primary">已選擇 {selectedFiles.size} 個文件</span>
-                ) : (
-                  '全選文件'
-                )}
-              </Label>
-            </div>
-            
-            {selectedFiles.size > 0 && (
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20">
-                  {formatFileSize(files.filter(f => selectedFiles.has(f.file_id)).reduce((sum, file) => sum + (file.file_size || 0), 0))}
-                </Badge>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const selectedFileList = files.filter(f => selectedFiles.has(f.file_id))
-                    selectedFileList.forEach(file => onDownload(file.file_id, file.filename))
-                  }}
-                  className="gap-1"
-                >
-                  <Download className="w-3 h-3" />
-                  批量下載
-                </Button>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+        {files.map((file, index) => {
+          const { category, bgColor, color } = getFileIcon(file.file_type || '', file.filename)
+          const isSelected = selectedFiles.has(file.file_id)
+          const uniqueKey = file.file_id || `file-grid-${index}`
+          
+          return (
+            <motion.div
+              key={uniqueKey}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.02, duration: 0.2 }}
+              className={cn(
+                "group relative bg-card/50 backdrop-blur-sm rounded-xl border transition-all duration-200 cursor-pointer overflow-hidden",
+                isSelected 
+                  ? "border-primary/50 ring-1 ring-primary/20 bg-primary/5" 
+                  : "border-border/40 hover:border-border/60 hover:bg-card/80"
+              )}
+              onClick={() => toggleSelection(file.file_id)}
+              onDoubleClick={() => onPreview(file)}
+            >
+              {/* 縮圖區域 */}
+              <div className="aspect-square p-2.5 pb-0">
+                <FileThumbnail file={file} />
               </div>
-            )}
-          </motion.div>
-        )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {files.map((file, index) => {
-            const { icon, color, category } = getFileIcon(file.file_type || '', file.filename)
-            const isSelected = selectedFiles.has(file.file_id)
-            const uniqueKey = file.file_id || `file-grid-${index}-${file.filename}`
-            return (
-              <motion.div
-                key={uniqueKey}
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.02 }}
+              {/* 選擇指示器 */}
+              <div 
                 className={cn(
-                  "group relative bg-card border border-border rounded-lg p-4 hover:shadow-md hover:shadow-primary/5 transition-all duration-200 cursor-pointer overflow-hidden",
-                  isSelected && "ring-1 ring-primary border-primary shadow-sm shadow-primary/10"
+                  "absolute top-2 left-2 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all",
+                  isSelected 
+                    ? "bg-primary border-primary" 
+                    : "bg-background/80 backdrop-blur-sm border-border/50 opacity-0 group-hover:opacity-100"
                 )}
-                onClick={() => toggleSelection(file.file_id)}
-                onDoubleClick={() => onPreview(file)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggleSelection(file.file_id)
+                }}
               >
-                {/* 背景漸變 */}
-                <div className="absolute inset-0 bg-gradient-to-br from-transparent via-transparent to-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                
-                {/* 選擇框 */}
-                <div className="absolute top-3 left-3 z-10">
-                  <div className={cn(
-                    "w-5 h-5 rounded border flex items-center justify-center transition-all duration-200",
-                    isSelected 
-                      ? "bg-primary border-primary" 
-                      : "bg-background/90 border-border group-hover:border-primary/50"
-                  )}>
-                    {isSelected && <CheckCircle2 className="w-3 h-3 text-primary-foreground" />}
-                  </div>
-                </div>
+                {isSelected && <Check className="w-3 h-3 text-primary-foreground" />}
+              </div>
 
-                {/* 文件圖標或縮圖 */}
-                <div className="aspect-square mb-3 relative">
-                  <FileThumbnail file={file} />
-
-                  {/* 懸停操作按鈕 */}
-                  <div className="absolute inset-0 bg-black/60 rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 flex items-center justify-center gap-2">
-                    <TooltipButton
-                      tooltip="預覽"
-                      onClick={(e?: React.MouseEvent<HTMLButtonElement>) => {
-                        e?.stopPropagation()
-                        onPreview(file)
-                      }}
-                      className="bg-white/20 text-white hover:bg-white/30 border-0 backdrop-blur-sm"
-                      size="sm"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </TooltipButton>
-                    
-                    <TooltipButton
-                      tooltip="下載"
-                      onClick={(e?: React.MouseEvent<HTMLButtonElement>) => {
-                        e?.stopPropagation()
-                        onDownload(file.file_id, file.filename)
-                      }}
-                      className="bg-white/20 text-white hover:bg-white/30 border-0 backdrop-blur-sm"
-                      size="sm"
-                    >
-                      <Download className="w-4 h-4" />
-                    </TooltipButton>
-                  </div>
-                </div>
-
-                {/* 文件資訊 */}
-                <div className="space-y-1 relative z-10">
-                  <div className="font-medium text-sm truncate pr-6" title={file.filename}>
-                    {file.filename}
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{formatFileSize(file.file_size || 0)}</span>
-                    <span>{formatTimeAgo(file.upload_time)}</span>
-                  </div>
-                </div>
-
-                {/* 類型標籤 */}
-                <Badge 
-                  variant="secondary" 
-                  className="absolute top-3 right-3 text-xs bg-background/90 backdrop-blur-sm border-0"
+              {/* 懸停操作 */}
+              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <TooltipButton
+                  tooltip="預覽"
+                  onClick={(e) => {
+                    e?.stopPropagation()
+                    onPreview(file)
+                  }}
+                  className="w-7 h-7 bg-background/80 backdrop-blur-sm border border-border/50 hover:bg-background"
                 >
-                  {category}
-                </Badge>
+                  <Eye className="w-3.5 h-3.5" />
+                </TooltipButton>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="w-7 h-7 bg-background/80 backdrop-blur-sm border border-border/50 hover:bg-background"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <MoreHorizontal className="w-3.5 h-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[140px]">
+                    <DropdownMenuItem onClick={() => onDownload(file.file_id, file.filename)}>
+                      <Download className="w-4 h-4 mr-2" />
+                      下載
+                    </DropdownMenuItem>
+                    <DropdownMenuItem 
+                      onClick={() => {
+                        navigator.clipboard.writeText(`${window.location.origin}/api/files/${file.file_id}`)
+                        toast.success('連結已複製')
+                      }}
+                    >
+                      <Copy className="w-4 h-4 mr-2" />
+                      複製連結
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem 
+                      onClick={() => {
+                        if (confirm(`確定刪除「${file.filename}」？`)) onDelete(file.file_id)
+                      }}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      刪除
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
 
-                {/* 收藏標誌 */}
-                {file.is_favorite && (
-                  <div className="absolute bottom-3 right-3">
-                    <Star className="w-4 h-4 text-yellow-500 fill-current" />
-                  </div>
-                )}
-              </motion.div>
-            )
-          })}
-        </div>
+              {/* 檔案資訊 */}
+              <div className="p-2.5 pt-2 space-y-0.5">
+                <p className="text-sm font-medium truncate" title={file.filename}>
+                  {file.filename}
+                </p>
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{formatFileSize(file.file_size || 0)}</span>
+                  <span>{formatTimeAgo(file.upload_time)}</span>
+                </div>
+              </div>
+
+              {/* 收藏標記 */}
+              {file.is_favorite && (
+                <div className="absolute top-2 left-9">
+                  <Star className="w-3.5 h-3.5 text-amber-400 fill-current" />
+                </div>
+              )}
+            </motion.div>
+          )
+        })}
       </div>
     )
   }
 
   // 列表視圖
   return (
-    <div className="space-y-4">
-      {/* 全選控制 */}
-      {files.length > 0 && (
-        <motion.div 
-          className="flex items-center justify-between p-4 bg-card/50 backdrop-blur-sm border border-border/50 rounded-xl"
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          <div className="flex items-center gap-3">
-            <input
-              type="checkbox"
-              checked={selectedFiles.size === files.length && files.length > 0}
-              onChange={handleSelectAll}
-              className="rounded border-input w-4 h-4"
-            />
-            <Label className="text-sm font-medium">
-              {selectedFiles.size > 0 ? (
-                <span className="text-primary">已選擇 {selectedFiles.size} 個文件</span>
-              ) : (
-                '全選文件'
-              )}
-            </Label>
-          </div>
-          
-          {selectedFiles.size > 0 && (
-            <div className="flex items-center gap-2">
-              <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20">
-                {formatFileSize(files.filter(f => selectedFiles.has(f.file_id)).reduce((sum, file) => sum + (file.file_size || 0), 0))}
-              </Badge>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  const selectedFileList = files.filter(f => selectedFiles.has(f.file_id))
-                  selectedFileList.forEach(file => onDownload(file.file_id, file.filename))
-                }}
-                className="gap-1"
-              >
-                <Download className="w-3 h-3" />
-                批量下載
-              </Button>
-            </div>
-          )}
-        </motion.div>
-      )}
-
-      <div className="space-y-2">
-        {files.map((file, index) => {
-          const { icon, color, category } = getFileIcon(file.file_type || '', file.filename)
-          const isSelected = selectedFiles.has(file.file_id)
-          const uniqueKey = file.file_id || `file-list-${index}-${file.filename}`
-          return (
-            <motion.div
-              key={uniqueKey}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.02 }}
+    <div className="space-y-1">
+      {files.map((file, index) => {
+        const { category, bgColor, color, IconComponent } = getFileIcon(file.file_type || '', file.filename)
+        const isSelected = selectedFiles.has(file.file_id)
+        const uniqueKey = file.file_id || `file-list-${index}`
+        
+        return (
+          <motion.div
+            key={uniqueKey}
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: index * 0.02, duration: 0.2 }}
+            className={cn(
+              "group flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all",
+              isSelected 
+                ? "bg-primary/5 ring-1 ring-primary/20" 
+                : "hover:bg-muted/30"
+            )}
+            onClick={() => toggleSelection(file.file_id)}
+            onDoubleClick={() => onPreview(file)}
+          >
+            {/* 選擇指示器 */}
+            <div 
               className={cn(
-                "group flex items-center gap-4 p-4 bg-card/60 backdrop-blur-sm border border-border/60 rounded-xl hover:shadow-md hover:shadow-primary/10 transition-all duration-300 cursor-pointer",
-                isSelected && "ring-2 ring-primary border-primary shadow-lg shadow-primary/20"
-              )}
-              onClick={() => toggleSelection(file.file_id)}
-              onDoubleClick={() => onPreview(file)}
-            >
-              {/* 選擇框 */}
-              <div className={cn(
-                "w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-200",
+                "w-4 h-4 rounded border flex items-center justify-center transition-all flex-shrink-0",
                 isSelected 
                   ? "bg-primary border-primary" 
-                  : "bg-background/80 border-border group-hover:border-primary/50"
-              )}>
-                {isSelected && <CheckCircle2 className="w-3 h-3 text-primary-foreground" />}
-              </div>
+                  : "border-border/50 group-hover:border-border"
+              )}
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleSelection(file.file_id)
+              }}
+            >
+              {isSelected && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
+            </div>
 
-              {/* 文件圖標或縮圖 */}
-              <div className="flex-shrink-0 relative">
-                <div className="w-12 h-12">
-                  <FileThumbnail file={file} size="small" />
-                </div>
-              </div>
+            {/* 檔案圖示 */}
+            <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0", bgColor)}>
+              <IconComponent className={cn("w-4 h-4", color)} />
+            </div>
 
-              {/* 文件資訊 */}
-              <div className="flex-1 min-w-0 space-y-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="font-medium truncate flex-1">{file.filename}</div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <Badge variant="secondary" className="text-xs bg-background/60 border-border/60">
-                      {category}
-                    </Badge>
-                    {file.is_favorite && (
-                      <Star className="w-4 h-4 text-yellow-500 fill-current" />
-                    )}
-                  </div>
-                </div>
-                <div className="text-sm text-muted-foreground flex items-center gap-3">
-                  <span className="flex items-center gap-1">
-                    <Archive className="w-3 h-3" />
-                    {formatFileSize(file.file_size || 0)}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    {formatTimeAgo(file.upload_time)}
-                  </span>
-                  {file.description && (
-                    <span className="truncate max-w-xs flex items-center gap-1">
-                      <Info className="w-3 h-3 flex-shrink-0" />
-                      {file.description}
-                    </span>
-                  )}
-                </div>
-              </div>
+            {/* 檔案名稱 */}
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{file.filename}</p>
+            </div>
 
-              {/* 操作按鈕 */}
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                <TooltipButton
-                  tooltip="預覽"
-                  onClick={() => onPreview(file)}
-                  variant="ghost"
-                  size="sm"
-                  className="hover:bg-primary/10 hover:text-primary"
-                >
-                  <Eye className="w-4 h-4" />
-                </TooltipButton>
-                
-                <TooltipButton
-                  tooltip="下載"
-                  onClick={() => onDownload(file.file_id, file.filename)}
-                  variant="ghost"
-                  size="sm"
-                  className="hover:bg-primary/10 hover:text-primary"
-                >
-                  <Download className="w-4 h-4" />
-                </TooltipButton>
-                
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="hover:bg-primary/10 hover:text-primary">
-                      <MoreHorizontal className="w-4 h-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuItem onClick={() => onPreview(file)} className="gap-2">
-                      <Eye className="w-4 h-4" />
-                      預覽
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => onDownload(file.file_id, file.filename)} className="gap-2">
-                      <Download className="w-4 h-4" />
-                      下載
-                    </DropdownMenuItem>
-                    <DropdownMenuItem 
-                      onClick={() => {
-                        navigator.clipboard.writeText(`${window.location.origin}${apiBaseUrl}/files/${file.file_id}`)
-                        toast.success('連結已複製到剪貼板')
-                      }}
-                      className="gap-2"
-                    >
-                      <Copy className="w-4 h-4" />
-                      複製連結
-                    </DropdownMenuItem>
-                    <DropdownMenuItem className="gap-2">
-                      <Edit3 className="w-4 h-4" />
-                      重命名
-                    </DropdownMenuItem>
-                    <DropdownMenuItem className="gap-2">
-                      <Star className="w-4 h-4" />
-                      {file.is_favorite ? '取消收藏' : '加入收藏'}
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem 
-                      onClick={() => {
-                        if (confirm(`確定刪除文件"${file.filename}"嗎？`)) {
-                          onDelete(file.file_id)
-                        }
-                      }}
-                      className="text-destructive focus:text-destructive gap-2"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      刪除
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            </motion.div>
-          )
-        })}
-      </div>
+            {/* 大小 */}
+            <span className="text-xs text-muted-foreground w-16 text-right hidden sm:block">
+              {formatFileSize(file.file_size || 0)}
+            </span>
+
+            {/* 時間 */}
+            <span className="text-xs text-muted-foreground w-20 text-right hidden md:block">
+              {formatTimeAgo(file.upload_time)}
+            </span>
+
+            {/* 操作按鈕 */}
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <TooltipButton
+                tooltip="預覽"
+                onClick={(e) => {
+                  e?.stopPropagation()
+                  onPreview(file)
+                }}
+                className="w-7 h-7"
+              >
+                <Eye className="w-3.5 h-3.5" />
+              </TooltipButton>
+              <TooltipButton
+                tooltip="下載"
+                onClick={(e) => {
+                  e?.stopPropagation()
+                  onDownload(file.file_id, file.filename)
+                }}
+                className="w-7 h-7"
+              >
+                <Download className="w-3.5 h-3.5" />
+              </TooltipButton>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="w-7 h-7"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MoreHorizontal className="w-3.5 h-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-[140px]">
+                  <DropdownMenuItem 
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/api/files/${file.file_id}`)
+                      toast.success('連結已複製')
+                    }}
+                  >
+                    <Copy className="w-4 h-4 mr-2" />
+                    複製連結
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem 
+                    onClick={() => {
+                      if (confirm(`確定刪除「${file.filename}」？`)) onDelete(file.file_id)
+                    }}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    刪除
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </motion.div>
+        )
+      })}
     </div>
   )
 }
 
 export default FileManager
 
-// 導出類型定義以供其他組件使用
+// 導出類型定義
 export type { FileItem, FileStats, FileManagerProps }

@@ -19,7 +19,7 @@ settings = get_settings()
 class MemoryService:
     """記憶服務類"""
     def __init__(self):
-        self.memory_model = "gemini-2.0-flash-lite"  # 用於記憶處理的模型
+        self.memory_model = "gemma-3-27b-it"  # 用於記憶處理的模型
         
     async def update_memory(self, user_id: str, prompt: str) -> str:
         """

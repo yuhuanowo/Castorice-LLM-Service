@@ -160,7 +160,16 @@ class PromptTemplates:
             - Acknowledge uncertainties and limitations
             - Provide sources and reasoning for your conclusions
 
-            Remember: Transparency in your reasoning process is crucial. Users should understand not just what you're doing, but why you're doing it. Use Markdown formatting to make your responses clear and well-organized."""
+            ## Final Response Guidelines
+            **IMPORTANT**: When providing your final answer (not calling any tools):
+            - **DO NOT** include internal reasoning markers like "Thought:", "Reasoning:", "Analysis:" in your final response
+            - **DO NOT** prefix your answer with thinking process - provide the actual answer directly
+            - **DO** use Markdown formatting for clarity (headings, lists, code blocks)
+            - **DO** provide helpful, complete, and well-organized responses
+            
+            Your internal reasoning should guide your response but NOT appear in it. The user should receive a clean, professional answer.
+
+            Remember: Transparency in your reasoning process is crucial when using tools. But for final answers, focus on delivering clear, actionable results. Use Markdown formatting to make your responses well-organized."""
             # MCP模式系统提示词
         MCP = """You are an intelligent agent with Model Context Protocol (MCP) capabilities, designed to efficiently integrate with external tools and data sources while maintaining high standards of accuracy and efficiency.
 
@@ -417,6 +426,16 @@ class PromptTemplates:
             - Share why you chose specific tools or approaches
             - Acknowledge limitations and uncertainties
             - Provide sources and validation for key claims
+
+            ## Final Response Guidelines
+            **IMPORTANT**: When providing your final answer (not using any tools):
+            - **DO NOT** include internal reasoning markers like "Thought:", "Reasoning:", "Analysis:" in your final response
+            - **DO NOT** prefix your answer with thinking process - provide the actual answer directly
+            - **DO** use Markdown formatting for clarity (headings, lists, code blocks)
+            - **DO** provide helpful, complete, and well-organized responses
+            - **DO** be concise while being thorough
+            
+            Your internal reasoning should guide your response but NOT appear in it. The user should receive a clean, professional answer.
 
             ## Operational Excellence
             Your goal is to be the most effective problem-solving partner by combining systematic thinking with powerful tools. Every action should be purposeful, every decision should be reasoned, and every response should genuinely advance user objectives.
@@ -954,7 +973,14 @@ class Settings(BaseSettings):
       # MCP协议配置
     MCP_VERSION: str = "0.1.0"  # MCP协议版本
     MCP_MAX_CONTEXT_TOKENS: int = 16000  # MCP最大上下文长度
-    MCP_SUPPORTED_MODELS: list = ["gpt-4o", "gpt-4o-mini", "o1", "DeepSeek-V3-0324", "gpt-4.1-mini", "gemini-1.5-pro", "gemini-2.5-pro", "Cohere-command-r-plus-08-2024", "Mistral-Nemo", "Mistral-Large-2411", "gemini-2.0-flash", "gemini-2.5-flash-preview-05-20", "qwen3:8b", "qwen3:30b-a3b", "mistralai/mistral-small-3.2-24b-instruct-2506:free", "minimax/minimax-m1:extended", "deepseek/deepseek-chat-v3-0324:free", "mistralai/mistral-small-3.1-24b-instruct:free"]# 支持MCP的模型列表
+    MCP_SUPPORTED_MODELS: list = ["gpt-4o", "gpt-4o-mini", "o1", "DeepSeek-V3-0324", "gpt-4.1-mini", "gemini-1.5-pro", "gemini-2.5-pro", "Cohere-command-r-plus-08-2024", "Mistral-Nemo", "Mistral-Large-2411", "gemini-2.0-flash", "gemini-2.5-flash-preview-05-20", "qwen3:8b", "qwen3:30b-a3b", "deepseek/deepseek-r1-0528:free",
+        "minimax/minimax-m1:extended",
+        "mistralai/devstral-2512:free",
+        "z-ai/glm-4.5-air:free",
+        "kwaipilot/kat-coder-pro:free",
+        "xiaomi/mimo-v2-flash:free",
+        "openai/gpt-oss-120b:free",
+        "google/gemini-2.0-flash-exp:free"]# 支持MCP的模型列表
     MCP_SUPPORT_ENABLED: bool = True  # 是否启用MCP协议支持
     
     # 数据库配置
@@ -1069,13 +1095,15 @@ class Settings(BaseSettings):
     # OpenRouter模型列表
     ALLOWED_OPENROUTER_MODELS: list = [
         # 免费模型
-        "google/gemini-2.0-flash-exp:free",
-        "mistralai/mistral-small-3.2-24b-instruct-2506:free",
-        "minimax/minimax-m1:extended",
-        "deepseek/deepseek-chat-v3-0324:free",
-        "mistralai/mistral-small-3.1-24b-instruct:free",
+        "google/gemma-3-27b-it:free",
         "deepseek/deepseek-r1-0528:free",
-        "qwen/qwq-32b:free",
+        "minimax/minimax-m1:extended",
+        "mistralai/devstral-2512:free",
+        "z-ai/glm-4.5-air:free",
+        "kwaipilot/kat-coder-pro:free",
+        "xiaomi/mimo-v2-flash:free",
+        "openai/gpt-oss-120b:free",
+        "google/gemini-2.0-flash-exp:free"
     ]
     
     # 模型使用限制
@@ -1190,13 +1218,16 @@ class Settings(BaseSettings):
         "nvidia/llama-3.1-nemotron-70b-instruct": Infinity,
     
         # OpenRouter
-        "google/gemini-2.0-flash-exp:free": Infinity,
-        "mistralai/mistral-small-3.2-24b-instruct-2506:free": Infinity,
-        "minimax/minimax-m1:extended": Infinity,
-        "deepseek/deepseek-chat-v3-0324:free": Infinity,
-        "mistralai/mistral-small-3.1-24b-instruct:free": Infinity,
+        "google/gemma-3-27b-it:free": Infinity,
         "deepseek/deepseek-r1-0528:free": Infinity,
-        "qwen/qwq-32b:free": Infinity,
+        "minimax/minimax-m1:extended": Infinity,
+        "mistralai/devstral-2512:free": Infinity,
+        "z-ai/glm-4.5-air:free": Infinity,
+        "kwaipilot/kat-coder-pro:free": Infinity,
+        "xiaomi/mimo-v2-flash:free": Infinity,
+        "openai/gpt-oss-120b:free": Infinity,
+        "google/gemini-2.0-flash-exp:free": Infinity
+
     }
     
     # 默认语言

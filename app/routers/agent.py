@@ -1,9 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Request
+"""
+Agent路由 - 全流式自主智能代理
+
+基於 ReAct 架構，所有請求均通過 SSE 流式傳輸。
+LLM 完全自主決定工具選擇、反思時機和任務完成判斷。
+"""
+
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel
 import uuid
 from datetime import datetime
-import logging
 import json
 import asyncio
 
@@ -12,363 +18,124 @@ from fastapi.responses import StreamingResponse
 from app.core.dependencies import get_api_key, get_settings_dependency
 from app.core.config import Settings
 from app.services.agent_service import agent_service
-from app.models.mongodb import create_chat_log, get_user_memory, add_message_to_session, get_chat_session, update_session_title
+from app.models.mongodb import add_message_to_session, get_chat_session, update_session_title
 from app.utils.logger import logger
-from app.services.llm_service import llm_service  # 添加导入llm_service
-from app.routers.api import generate_smart_title  # 導入智能標題生成函數
+from app.services.llm_service import llm_service
+from app.routers.api import generate_smart_title
 
 # 创建Agent路由
 router = APIRouter()
 
 
-# 统一Agent请求模型
+# ============================================================
+# 請求/響應模型
+# ============================================================
+
 class UnifiedAgentRequest(BaseModel):
     """
-    Agent请求模型
+    Agent請求模型
     
-    支持两种主要模式：
-    1. ReAct模式 (enable_react_mode=True) - 完整的推理、行动、反思循环
-    2. 简单模式 (enable_react_mode=False) - 基础的工具调用模式
-    
-    每种模式都可以选择性启用MCP功能 (enable_mcp=True/False)
+    自主智能代理 - 基於 ReAct 架構的全流式智能代理
+    所有請求均為流式輸出，即時返回推理過程
     """
     prompt: str
     user_id: str
     model_name: str = "gpt-4o-mini"
-    session_id: Optional[str] = None  # 會話ID，用於會話管理
+    session_id: Optional[str] = None
     
-    # 基本功能开关
+    # 基本功能開關
     enable_memory: bool = True
     enable_reflection: bool = True
-    enable_react_mode: bool = True
-    enable_mcp: bool = False
+    enable_mcp: bool = True
     
-    # 高级选项
+    # 高級選項
     max_steps: Optional[int] = None
     tools_config: Optional[Dict[str, bool]] = None
     system_prompt_override: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
     
-    # 多模态输入
+    # 多模態輸入
     image: Optional[str] = None
     audio: Optional[str] = None
     
-    # MCP特定字段（如果启用MCP时需要）
+    # MCP特定字段
     environment_info: Optional[Dict[str, Any]] = None
     document_chunks: Optional[List[Dict[str, Any]]] = None
 
 
-class AgentResponse(BaseModel):
-    """
-    Agent响应模型
-    
-    包含不同模式下返回的各种信息：
-    - success: 执行是否成功
-    - interaction_id: 交互ID，用于关联请求和响应
-    - response: 模型的原始响应
-    - execution_trace: 执行跟踪（包含状态变化、工具调用等）
-    - reasoning_steps: 推理步骤（在ReAct模式下包含思考、行动、反思等）
-    - execution_time: 执行时间（秒）
-    - steps_taken: 执行的步骤数
-    - generated_image: 可能生成的图片（如果有）
-    - meta: 元数据（可能包含MCP相关信息）
-    """
-    success: bool
-    interaction_id: str
-    response: Dict[str, Any]
-    execution_trace: Optional[List[Dict[str, Any]]] = None
-    reasoning_steps: Optional[List[Dict[str, Any]]] = None
-    execution_time: float
-    steps_taken: int
-    generated_image: Optional[str] = None
-    meta: Optional[Dict[str, Any]] = None  # 用于MCP功能的额外元数据
+# ============================================================
+# 輔助函數：驗證和預處理
+# ============================================================
 
-
-@router.post("", response_model=AgentResponse, tags=["agent"])
-@router.post("/", response_model=AgentResponse, tags=["agent"])
-async def run_unified_agent(
-    request: UnifiedAgentRequest = Body(...),
-    settings: Settings = Depends(get_settings_dependency),
-    api_key: str = Depends(get_api_key),
-):
-    """
-    统一的Agent接口 - 支持两种主要模式：ReAct模式和简单模式，每种模式都可以选择性启用MCP功能
+async def validate_request(body: dict, settings: Settings) -> None:
+    """驗證請求參數"""
+    model_name = body.get("model_name", "gpt-4o-mini")
+    enable_mcp = body.get("enable_mcp", True)
     
-    - **prompt**: 用户提示或查询
-    - **user_id**: 用户ID
-    - **model_name**: 模型名称
+    # 驗證模型
+    all_models = (
+        settings.ALLOWED_GITHUB_MODELS + 
+        settings.ALLOWED_GEMINI_MODELS + 
+        settings.ALLOWED_OLLAMA_MODELS + 
+        settings.ALLOWED_NVIDIA_NIM_MODELS + 
+        settings.ALLOWED_OPENROUTER_MODELS
+    )
+    if model_name not in all_models:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"不支持的模型: {model_name}"
+        )
     
-    基本功能开关:
-    - **enable_memory**: 是否启用记忆功能
-    - **enable_reflection**: 是否启用反思能力（仅在ReAct模式下有效）
-    - **enable_react_mode**: 是否使用ReAct模式（思考-行动-观察）
-    - **enable_mcp**: 是否启用MCP功能（可在任何模式下使用）
-    
-    高级选项:
-    - **max_steps**: 可选的最大步骤数限制
-    - **tools_config**: 工具配置，如 {"search": true, "image": false}
-    - **system_prompt_override**: 可选的系统提示覆盖
-    - **context**: 附加上下文信息
-    
-    多模态输入:
-    - **image**: 可选的图片输入（base64编码）
-    - **audio**: 可选的音频输入（base64编码）
-    
-    MCP特定字段:
-    - **environment_info**: 环境信息（启用MCP时使用）
-    - **document_chunks**: 文档块列表（启用MCP时使用）
-    """
-    try:
-        logger.info(f"收到Agent请求，用户: {request.user_id}, 模型: {request.model_name}, " +
-                   f"模式: {'ReAct' if request.enable_react_mode else '简单'}, MCP功能: {'启用' if request.enable_mcp else '禁用'}")
-        
-        # 验证模型
-        if request.model_name not in settings.ALLOWED_GITHUB_MODELS + settings.ALLOWED_GEMINI_MODELS + settings.ALLOWED_OLLAMA_MODELS + settings.ALLOWED_NVIDIA_NIM_MODELS + settings.ALLOWED_OPENROUTER_MODELS:
+    # 驗證MCP支持
+    if enable_mcp:
+        if model_name not in settings.MCP_SUPPORTED_MODELS:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"不支持的模型: {request.model_name}"
+                detail=f"模型 {model_name} 不支持MCP功能"
             )
-            
-        # 检查用户使用限制，但不增加使用次数
-        try:
-            # 从JSON文件中获取当前使用量
-            with open(llm_service.usage_path, "r") as f:
-                user_usage = json.load(f)
-            
-            current_date = datetime.now().strftime("%Y-%m-%d")
-            
-            # 如果是新的一天，不需要检查限制
-            if user_usage.get("date") != current_date:
-                pass
-            else:
-                # 获取当前使用量
-                usage_count = 0
-                if request.user_id in user_usage and request.model_name in user_usage[request.user_id]:
-                    usage_count = user_usage[request.user_id][request.model_name]
-                
-                # 获取模型限制
-                limit = settings.MODEL_USAGE_LIMITS.get(request.model_name, 0)
-                
-                # 检查如果增加1次后是否会超过限制
-                if usage_count + 1 > limit:
-                    raise HTTPException(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        detail=f"今日模型 {request.model_name} 使用量已达上限 ({limit})"
-                    )
-        except FileNotFoundError:
-            # 如果文件不存在，则无需检查限制
-            pass
-        except json.JSONDecodeError:
-            logger.error("使用量JSON解析错误")
-        except Exception as e:
-            if isinstance(e, HTTPException):
-                raise e
-            logger.error(f"检查使用量错误: {str(e)}")
-          # 验证MCP支持（如果启用）
-        if request.enable_mcp:
-            if request.model_name not in settings.MCP_SUPPORTED_MODELS:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"模型 {request.model_name} 不支持MCP功能"
-                )
-            
-            # 检查MCP功能是否启用
-            if settings.MCP_SUPPORT_ENABLED is False:
-                raise HTTPException(
-                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                    detail="MCP功能支持尚未启用，请在配置中启用"
-                )
+        if settings.MCP_SUPPORT_ENABLED is False:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="MCP功能支持尚未啟用"
+            )
+
+
+async def check_usage_limit(user_id: str, model_name: str, settings: Settings) -> None:
+    """檢查用戶使用限制"""
+    try:
+        with open(llm_service.usage_path, "r") as f:
+            user_usage = json.load(f)
         
-        # 检查工具支持
-        if request.model_name in settings.UNSUPPORTED_TOOL_MODELS and request.tools_config:
-            logger.warning(f"模型 {request.model_name} 不支持工具调用，但仍然尝试配置工具")
-            
-        # 处理最大步骤数
-        max_steps = request.max_steps if request.max_steps is not None else settings.AGENT_MAX_STEPS
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        if user_usage.get("date") != current_date:
+            return  # 新的一天，無需檢查
         
-        # 构建可能的系统提示覆盖
-        system_prompt_override = None
-        if request.system_prompt_override:
-            system_prompt_override = {
-                "role": "system",
-                "content": request.system_prompt_override
-            }
+        usage_count = 0
+        if user_id in user_usage and model_name in user_usage[user_id]:
+            usage_count = user_usage[user_id][model_name]
         
-        # 处理额外上下文
-        additional_context = []
-        if request.context:
-            for key, value in request.context.items():
-                additional_context.append({
-                    "role": "system",
-                    "content": f"{key}: {json.dumps(value, ensure_ascii=False)}"
-                })
-        
-        # 运行Agent
-        start_time = datetime.now()
-        
-        # 准备工具配置
-        tools_config = request.tools_config or {}
-        enable_search = tools_config.get("search", True)
-        include_advanced_tools = tools_config.get("advanced", settings.AGENT_DEFAULT_ADVANCED_TOOLS)
-        
-        # 调用Agent服务
-        result = await agent_service.run(
-            user_id=request.user_id,
-            prompt=request.prompt,
-            model_name=request.model_name,
-            enable_memory=request.enable_memory,
-            enable_reflection=request.enable_reflection,
-            enable_mcp=request.enable_mcp,
-            enable_react_mode=request.enable_react_mode,
-            max_steps=max_steps,
-            system_prompt_override=system_prompt_override,
-            additional_context=additional_context,
-            image=request.image,
-            audio=request.audio,
-            tools_config={
-                "enable_search": enable_search,
-                "include_advanced_tools": include_advanced_tools
-            }
-        )
-          # 记录到聊天历史
-        await create_chat_log(
-            user_id=request.user_id,
-            model=request.model_name,
-            prompt=request.prompt,
-            reply=result["response"]["choices"][0]["message"]["content"] if "choices" in result["response"] else "无响应",
-            interaction_id=result["interaction_id"]
-        )
-        
-        # 會話管理 - 如果提供了session_id，保存到會話中
-        if request.session_id:
-            logger.info(f"保存Agent響應到會話: session_id={request.session_id}")
-            
-            # 添加用戶消息到會話            
-            user_message = {
-                "id": str(uuid.uuid4()),
-                "role": "user",
-                "content": request.prompt,
-                "timestamp": datetime.now().isoformat()
-            }
-              # 提取Agent響應
-            agent_response_content = result["response"]["choices"][0]["message"]["content"] if "choices" in result["response"] else "Agent无响应"
-            
-            # 處理執行軌跡數據，確保格式符合前端UI期望
-            execution_trace = []
-            if result.get("execution_trace"):
-                for i, trace in enumerate(result["execution_trace"]):
-                    # 優先使用 context，如果沒有則使用 details，如果都沒有則不設置
-                    details = trace.get("context") or trace.get("details")
-                    trace_item = {
-                        "step": i + 1,
-                        "action": trace.get("action", "unknown"),
-                        "status": trace.get("status", "completed"),
-                        "timestamp": trace.get("timestamp", datetime.now().isoformat())
-                    }
-                    # 只有當 details 存在且不為空對象時才添加
-                    if details and (not isinstance(details, dict) or len(details) > 0):
-                        trace_item["details"] = details
-                    execution_trace.append(trace_item)
-            
-            # 處理推理步驟數據，確保格式符合前端UI期望
-            reasoning_steps = []
-            if result.get("reasoning_steps"):
-                for step in result["reasoning_steps"]:
-                    reasoning_steps.append({
-                        "type": step.get("type", "thought"),  # thought/action/observation/reflection
-                        "content": step.get("content", ""),
-                        "timestamp": step.get("timestamp", datetime.now().isoformat())
-                    })
-            
-            # 處理工具使用數據，確保格式符合前端UI期望
-            tools_used = []
-            if result.get("tools_used"):
-                for tool in result["tools_used"]:
-                    tools_used.append({
-                        "name": tool.get("name", "unknown_tool"),
-                        "result": tool.get("result", ""),
-                        "duration": tool.get("duration", 0)
-                    })
-            
-            # 添加助手回復到會話 - 包含完整的UI展示數據
-            assistant_message = {
-                "id": str(uuid.uuid4()),
-                "role": "assistant",
-                "content": agent_response_content,
-                "timestamp": datetime.now().isoformat(),
-                
-                # Agent模式核心信息
-                "mode": "agent",
-                "model_used": request.model_name,
-                "execution_time": result.get("execution_time", 0),
-                "steps_taken": result.get("steps_taken", 0),
-                
-                # UI展示增強信息
-                "execution_trace": execution_trace,
-                "reasoning_steps": reasoning_steps,
-                "tools_used": tools_used,
-                
-                # 圖片生成支持
-                "generated_image": result.get("generated_image"),
-                
-                # 完整原始響應數據（用於JSON按鈕）
-                "raw_response": {
-                    "success": result.get("success", True),
-                    "interaction_id": result.get("interaction_id"),
-                    "response": result.get("response", {}),
-                    "execution_trace": result.get("execution_trace", []),
-                    "reasoning_steps": result.get("reasoning_steps", []),
-                    "tools_used": result.get("tools_used", []),
-                    "execution_time": result.get("execution_time", 0),
-                    "steps_taken": result.get("steps_taken", 0),
-                    "meta": result.get("meta", {})
-                }
-            }
-            
-            # 保存用戶和助手消息
-            user_result = add_message_to_session(request.session_id, request.user_id, user_message, request.model_name)
-            assistant_result = add_message_to_session(request.session_id, request.user_id, assistant_message, request.model_name)
-            
-            if user_result["success"] and assistant_result["success"]:
-                logger.info(f"Agent消息已保存到會話: session_id={request.session_id}")
-                  # 如果是會話的第一條消息，智能生成標題
-                session = get_chat_session(request.session_id, request.user_id)
-                if session and session.get('message_count', 0) <= 2:  # 第一輪對話（用戶+助手=2條消息）
-                    # 使用智能標題生成
-                    smart_title = await generate_smart_title(request.prompt, agent_response_content)
-                    update_session_title(request.session_id, request.user_id, smart_title)
-                    logger.info(f"已為Agent會話智能生成標題: {smart_title}")
-            else:
-                logger.error(f"保存Agent消息到會話失敗: user_result={user_result}, assistant_result={assistant_result}")
-        execution_time = (datetime.now() - start_time).total_seconds()
-        logger.info(f"Agent请求处理完成，执行时间: {execution_time:.2f}秒，步骤数: {result['steps_taken']}")
-        
-        # 確保返回給前端的數據結構與存儲的一致
-        # 使用格式化後的數據覆蓋原始數據
-        # 初始化這些變量，以防它們未在session_id存在時定義
-        execution_trace = result.get("execution_trace", [])
-        reasoning_steps = result.get("reasoning_steps", [])
-        tools_used = result.get("tools_used", [])
-        
-        # 只有當session_id存在時才會重新格式化這些數據
-        if request.session_id:
-            # 這些變量已在處理session時被定義
-            pass
-            
-        result["execution_trace"] = execution_trace
-        result["reasoning_steps"] = reasoning_steps  
-        result["tools_used"] = tools_used
-        result["execution_time"] = result.get("execution_time", execution_time)
-        
-        return result
+        limit = settings.MODEL_USAGE_LIMITS.get(model_name, 0)
+        if usage_count + 1 > limit:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"今日模型 {model_name} 使用量已達上限 ({limit})"
+            )
+    except FileNotFoundError:
+        pass
+    except json.JSONDecodeError:
+        logger.error("使用量JSON解析錯誤")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Agent请求处理错误: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Agent处理错误: {str(e)}"
-        )
+        logger.error(f"檢查使用量錯誤: {str(e)}")
 
 
+# ============================================================
+# 主流式端點 - 唯一的Agent入口
+# ============================================================
+
+@router.post("", tags=["agent"])
+@router.post("/", tags=["agent"])
 @router.post("/stream", tags=["agent"])
 async def agent_stream(
     request: Request,
@@ -376,97 +143,193 @@ async def agent_stream(
     api_key: str = Depends(get_api_key),
 ):
     """
-    Agent流式推理接口（SSE）
-    請求體同 /api/v1/agent/ ，回應為流式SSE格式，每步推送一條推理狀態。
-    支持會話管理和增強訊息存儲。
+    自主智能代理 - 全流式 SSE 接口
+    
+    基於 ReAct (Reasoning, Acting, Observing) 架構的智能代理。
+    LLM 完全自主決定執行流程，所有輸出均為流式傳輸。
+    
+    **請求參數：**
+    - prompt: 用戶提示或查詢
+    - user_id: 用戶ID
+    - model_name: 模型名稱（默認 gpt-4o-mini）
+    - session_id: 可選會話ID
+    - enable_memory: 是否啟用記憶（默認 true）
+    - enable_reflection: 是否啟用反思（默認 true）
+    - enable_mcp: 是否啟用MCP工具（默認 true）
+    - max_steps: 最大步驟數限制
+    - tools_config: 工具配置
+    - context: 附加上下文
+    
+    **SSE事件格式：**
+    ```json
+    {
+        "step": 1,
+        "status": "thinking|executing|observing|reflecting|responding|done|error",
+        "message": "當前狀態描述",
+        "tool_name": "使用的工具名稱（可選）",
+        "tool_result": "工具執行結果（可選）",
+        "reasoning": "推理內容（可選）",
+        "is_final": false,
+        "timestamp": "2024-01-01T00:00:00.000Z",
+        "details": {}
+    }
+    ```
+    
+    **最終事件（is_final=true）包含完整響應：**
+    ```json
+    {
+        "step": 5,
+        "status": "done",
+        "message": "最終回答內容",
+        "is_final": true,
+        "response": { "choices": [...] },
+        "execution_trace": [...],
+        "reasoning_steps": [...],
+        "tools_used": [...],
+        "execution_time": 3.5,
+        "steps_taken": 5
+    }
+    ```
     """
     body = await request.json()
-    import uuid
-    from datetime import datetime
-    import json
-    import asyncio
     interaction_id = str(uuid.uuid4())
     step_counter = 0
     
-    # 從請求體提取參數
+    # 提取請求參數
     user_id = body.get("user_id", "test")
     prompt = body.get("prompt", "")
     model_name = body.get("model_name", "gpt-4o-mini")
-    session_id = body.get("session_id")  # 新增會話ID支持
+    session_id = body.get("session_id")
+    
+    logger.info(f"收到Agent流式請求，用戶: {user_id}, 模型: {model_name}, "
+                f"MCP: {'啟用' if body.get('enable_mcp', True) else '禁用'}")
+    
+    # 驗證請求
+    try:
+        await validate_request(body, settings)
+        await check_usage_limit(user_id, model_name, settings)
+    except HTTPException as exc:
+        # 如果驗證失敗，返回錯誤事件流
+        # 保存異常信息到局部變數以避免作用域問題
+        error_detail = exc.detail
+        error_status = exc.status_code
+        
+        async def error_generator():
+            error_data = {
+                "step": 1,
+                "status": "error",
+                "message": error_detail,
+                "is_final": True,
+                "timestamp": datetime.utcnow().isoformat(),
+                "details": {"error": True, "status_code": error_status}
+            }
+            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+        
+        return StreamingResponse(error_generator(), media_type="text/event-stream")
 
     async def event_generator():
         queue = asyncio.Queue()
         nonlocal step_counter
-        final_result = None  # 保存最終結果用於會話存儲
+        final_result = None
         start_time = datetime.now()
         
-        # 定义 on_step callback，将每步推理放入 queue
         async def on_step(step: dict):
+            """回調函數，將每步推理放入隊列"""
             nonlocal step_counter
             step_counter += 1
+            
             data = {
-                "step": step_counter,
+                "step": step.get("step", step_counter),
                 "status": step.get("status", "thinking"),
                 "message": step.get("message", ""),
-                "plan": step.get("plan"),
+                "tool_name": step.get("tool_name"),
+                "tool_result": step.get("tool_result"),
+                "reasoning": step.get("reasoning"),
+                "is_final": step.get("is_final", False),
                 "timestamp": datetime.utcnow().isoformat(),
                 "details": step.get("details", {})
             }
-            await queue.put(data)
             
-        # 启动 agent_service.run_stream 作為 background task
+            # 如果是最終結果，包含完整響應數據
+            if step.get("is_final"):
+                data.update({
+                    "response": step.get("response"),
+                    "execution_trace": step.get("execution_trace", []),
+                    "reasoning_steps": step.get("reasoning_steps", []),
+                    "tools_used": step.get("tools_used", []),
+                    "execution_time": step.get("execution_time"),
+                    "steps_taken": step.get("steps_taken"),
+                    "success": step.get("success", True),
+                    "interaction_id": interaction_id
+                })
+            
+            await queue.put(data)
+        
         async def run_agent():
+            """後台執行Agent任務"""
             nonlocal final_result
             try:
-                result = await agent_service.run_stream(
+                # 處理工具配置
+                tools_config = body.get("tools_config") or {}
+                
+                # 處理額外上下文
+                additional_context = []
+                if body.get("context"):
+                    for key, value in body["context"].items():
+                        additional_context.append({
+                            "role": "system",
+                            "content": f"{key}: {json.dumps(value, ensure_ascii=False)}"
+                        })
+                
+                # 處理系統提示覆蓋
+                system_prompt_override = None
+                if body.get("system_prompt_override"):
+                    system_prompt_override = {
+                        "role": "system",
+                        "content": body["system_prompt_override"]
+                    }
+                
+                result = await agent_service.run(
                     user_id=user_id,
                     prompt=prompt,
                     model_name=model_name,
                     enable_memory=body.get("enable_memory", True),
                     enable_reflection=body.get("enable_reflection", True),
-                    enable_mcp=body.get("enable_mcp", False),
-                    enable_react_mode=body.get("enable_react_mode", True),
+                    enable_mcp=body.get("enable_mcp", True),
                     max_steps=body.get("max_steps"),
-                    system_prompt_override=body.get("system_prompt_override"),
-                    additional_context=body.get("context"),
-                    tools_config=body.get("tools_config"),
+                    system_prompt_override=system_prompt_override,
+                    additional_context=additional_context,
+                    tools_config=tools_config,
                     image=body.get("image"),
                     audio=body.get("audio"),
                     on_step=on_step
                 )
                 
-                final_result = result  # 保存結果用於會話存儲
+                final_result = result
                 
-                await queue.put(_make_sse_step(
-                    step_counter+1, "done",
-                    result["response"]["choices"][0]["message"]["content"] if "choices" in result["response"] else "Agent已完成推理",
-                    details={"final": True}
-                ))
-                
-                # 流式處理完成後，保存到會話
+                # 保存到會話
                 if session_id and final_result:
-                    await save_stream_to_session(session_id, user_id, prompt, model_name, final_result, start_time)
+                    await save_to_session(
+                        session_id, user_id, prompt, 
+                        model_name, final_result, start_time
+                    )
                     
             except Exception as e:
                 logger.error(f"Agent流式處理錯誤: {str(e)}", exc_info=True)
-                await queue.put(_make_sse_step(
-                    step_counter+1, "error", str(e), details={"error": True}
-                ))
+                await queue.put({
+                    "step": step_counter + 1,
+                    "status": "error",
+                    "message": str(e),
+                    "is_final": True,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "details": {"error": True}
+                })
             finally:
-                await queue.put(None)  # 结束标记
+                await queue.put(None)  # 結束標記
 
-        def _make_sse_step(step, status, message, plan=None, details=None):
-            return {
-                "step": step,
-                "status": status,
-                "message": message,
-                "plan": plan,
-                "timestamp": datetime.utcnow().isoformat(),
-                "details": details or {}
-            }
-
-        # 启动 agent background task
+        # 啟動Agent任務
         agent_task = asyncio.create_task(run_agent())
+        
         try:
             while True:
                 data = await queue.get()
@@ -474,28 +337,48 @@ async def agent_stream(
                     break
                 yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
         except Exception as e:
+            logger.error(f"事件生成器錯誤: {str(e)}")
             error_data = {
-                "step": step_counter+1,
+                "step": step_counter + 1,
                 "status": "error",
                 "message": str(e),
-                "plan": None,
+                "is_final": True,
                 "timestamp": datetime.utcnow().isoformat(),
                 "details": {"error": True}
             }
             yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
         finally:
-            agent_task.cancel()
+            if not agent_task.done():
+                agent_task.cancel()
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(), 
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
-async def save_stream_to_session(session_id: str, user_id: str, prompt: str, model_name: str, result: dict, start_time: datetime):
-    """
-    將流式Agent結果保存到會話中，格式與非流式API一致
-    """
+# ============================================================
+# 會話保存輔助函數
+# ============================================================
+
+async def save_to_session(
+    session_id: str, 
+    user_id: str, 
+    prompt: str, 
+    model_name: str, 
+    result: dict, 
+    start_time: datetime
+) -> None:
+    """將Agent結果保存到會話中"""
     try:
-        logger.info(f"保存流式Agent響應到會話: session_id={session_id}")
-          # 添加用戶消息到會話
+        logger.info(f"保存Agent響應到會話: session_id={session_id}")
+        
+        # 用戶消息
         user_message = {
             "id": str(uuid.uuid4()),
             "role": "user",
@@ -503,70 +386,59 @@ async def save_stream_to_session(session_id: str, user_id: str, prompt: str, mod
             "timestamp": datetime.now().isoformat()
         }
         
-        # 提取Agent響應
-        agent_response_content = result["response"]["choices"][0]["message"]["content"] if "choices" in result["response"] else "Agent无响应"
+        # 提取Agent響應內容
+        response_content = "Agent無響應"
+        if result.get("response", {}).get("choices"):
+            response_content = result["response"]["choices"][0].get("message", {}).get("content", response_content)
         
-        # 處理執行軌跡數據，確保格式符合前端UI期望
+        # 處理執行軌跡
         execution_trace = []
-        if result.get("execution_trace"):
-            for i, trace in enumerate(result["execution_trace"]):
-                # 優先使用 context，如果沒有則使用 details，如果都沒有則不設置
-                details = trace.get("context") or trace.get("details")
-                trace_item = {
-                    "step": i + 1,
-                    "action": trace.get("action", "unknown"),
-                    "status": trace.get("status", "completed"),
-                    "timestamp": trace.get("timestamp", datetime.now().isoformat())
-                }
-                # 只有當 details 存在且不為空對象時才添加
-                if details and (not isinstance(details, dict) or len(details) > 0):
-                    trace_item["details"] = details
-                execution_trace.append(trace_item)
+        for i, trace in enumerate(result.get("execution_trace", [])):
+            details = trace.get("context") or trace.get("details")
+            trace_item = {
+                "step": i + 1,
+                "action": trace.get("action", "unknown"),
+                "status": trace.get("status", "completed"),
+                "timestamp": trace.get("timestamp", datetime.now().isoformat())
+            }
+            if details and (not isinstance(details, dict) or len(details) > 0):
+                trace_item["details"] = details
+            execution_trace.append(trace_item)
         
-        # 處理推理步驟數據，確保格式符合前端UI期望
+        # 處理推理步驟
         reasoning_steps = []
-        if result.get("reasoning_steps"):
-            for step in result["reasoning_steps"]:
-                reasoning_steps.append({
-                    "type": step.get("type", "thought"),  # thought/action/observation/reflection
-                    "content": step.get("content", ""),
-                    "timestamp": step.get("timestamp", datetime.now().isoformat())
-                })
+        for step in result.get("reasoning_steps", []):
+            reasoning_steps.append({
+                "type": step.get("type", "thought"),
+                "content": step.get("content", ""),
+                "timestamp": step.get("timestamp", datetime.now().isoformat())
+            })
         
-        # 處理工具使用數據，確保格式符合前端UI期望
+        # 處理工具使用
         tools_used = []
-        if result.get("tools_used"):
-            for tool in result["tools_used"]:
-                tools_used.append({
-                    "name": tool.get("name", "unknown_tool"),
-                    "result": tool.get("result", ""),
-                    "duration": tool.get("duration", 0)
-                })
+        for tool in result.get("tools_used", []):
+            tools_used.append({
+                "name": tool.get("name", "unknown_tool"),
+                "result": tool.get("result", ""),
+                "duration": tool.get("duration", 0)
+            })
         
         execution_time = (datetime.now() - start_time).total_seconds()
         
-        # 添加助手回復到會話 - 包含完整的UI展示數據
+        # 助手消息（包含完整的UI展示數據）
         assistant_message = {
             "id": str(uuid.uuid4()),
             "role": "assistant",
-            "content": agent_response_content,
+            "content": response_content,
             "timestamp": datetime.now().isoformat(),
-            
-            # Agent模式核心信息
             "mode": "agent",
             "model_used": model_name,
             "execution_time": result.get("execution_time", execution_time),
             "steps_taken": result.get("steps_taken", 0),
-            
-            # UI展示增強信息
             "execution_trace": execution_trace,
             "reasoning_steps": reasoning_steps,
             "tools_used": tools_used,
-            
-            # 圖片生成支持
             "generated_image": result.get("generated_image"),
-            
-            # 完整原始響應數據（用於JSON按鈕）
             "raw_response": {
                 "success": result.get("success", True),
                 "interaction_id": result.get("interaction_id"),
@@ -580,21 +452,21 @@ async def save_stream_to_session(session_id: str, user_id: str, prompt: str, mod
             }
         }
         
-        # 保存用戶和助手消息
+        # 保存消息
         user_result = add_message_to_session(session_id, user_id, user_message, model_name)
         assistant_result = add_message_to_session(session_id, user_id, assistant_message, model_name)
         
         if user_result["success"] and assistant_result["success"]:
-            logger.info(f"流式Agent消息已保存到會話: session_id={session_id}")
-              # 如果是會話的第一條消息，智能生成標題
+            logger.info(f"Agent消息已保存到會話: session_id={session_id}")
+            
+            # 為新會話生成智能標題
             session = get_chat_session(session_id, user_id)
-            if session and session.get('message_count', 0) <= 2:  # 第一輪對話（用戶+助手=2條消息）
-                # 使用智能標題生成
-                smart_title = await generate_smart_title(prompt, agent_response_content)
+            if session and session.get('message_count', 0) <= 2:
+                smart_title = await generate_smart_title(prompt, response_content)
                 update_session_title(session_id, user_id, smart_title)
-                logger.info(f"已為流式Agent會話智能生成標題: {smart_title}")
+                logger.info(f"已為Agent會話生成智能標題: {smart_title}")
         else:
-            logger.error(f"保存流式Agent消息到會話失敗: user_result={user_result}, assistant_result={assistant_result}")
+            logger.error(f"保存Agent消息失敗: user={user_result}, assistant={assistant_result}")
             
     except Exception as e:
-        logger.error(f"保存流式Agent會話時發生錯誤: {str(e)}", exc_info=True)
+        logger.error(f"保存會話時發生錯誤: {str(e)}", exc_info=True)

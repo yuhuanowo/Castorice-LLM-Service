@@ -971,8 +971,11 @@ class LLMService:
                 # 获取完整响应
                 response = await self._collect_gemini_stream(model_name, gemini_messages, generate_config)
                 
-                # 如果是字符串，说明已经提取了文本响应
+                # 如果是字符串，检查是否是错误消息
                 if isinstance(response, str):
+                    # 检查是否是错误响应
+                    if response.startswith("Gemini响应错误:") or response.startswith("Gemini请求超时"):
+                        return {"error": response, "detail": response}
                     response_text = response
                 else:
                     # 处理完整响应对象 - 可能包含函数调用
@@ -1117,9 +1120,16 @@ class LLMService:
                         )
                     raise
             
-            # 在线程池中运行同步代码
+            # 在线程池中运行同步代码（添加超时控制）
             loop = asyncio.get_running_loop()
-            response = await loop.run_in_executor(None, get_response)
+            try:
+                response = await asyncio.wait_for(
+                    loop.run_in_executor(None, get_response),
+                    timeout=600.0  # 600秒超时
+                )
+            except asyncio.TimeoutError:
+                logger.error("Gemini请求超时（600秒）")
+                return "Gemini请求超时，请稍后重试"
             
             # 检查是否存在函数调用，如果有就直接返回完整响应对象
             # 这样可以避免尝试提取不存在的文本部分

@@ -1,26 +1,22 @@
 import React, { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Clock, X, Plus, Search, FileText, Bot, PanelLeft, Trash2, ChevronDown, User, LogOut } from 'lucide-react'
+import { Clock, X, Plus, Bot, Trash2, ChevronDown, User, LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import type { ChatHistory, ApiStatus } from '@/types'
 
-export interface ChatHistory {
-  id: string
-  title: string
-  messages: any[]
-  timestamp: string
-}
+// 重新導出 ChatHistory 類型供其他組件使用
+export type { ChatHistory }
 
 interface SidebarProps {
-  apiStatus: 'connected' | 'disconnected' | 'testing'
+  apiStatus: ApiStatus
   sidebarOpen: boolean
   setSidebarOpen: (open: boolean) => void
   chatHistory: ChatHistory[]
   currentChatId: string
-  currentPage: 'chat' | 'search' | 'files'
-  setCurrentPage: (page: 'chat' | 'search' | 'files') => void
+  currentPage: 'chat' | 'files'
+  setCurrentPage: (page: 'chat' | 'files') => void
   fileStats: { total: number, size: number }
   searchResults: any[]
   createNewChat: () => void
@@ -177,23 +173,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
             开始新对话
           </Button>
         </div>        {/* 4. 查询功能 */}
-        {/* <div className="px-4 py-0.5">
+        <div className="px-4 py-0.5">
           <Button
-            variant={currentPage === 'search' ? 'secondary' : 'ghost'}
+            variant={currentPage === 'files' ? 'secondary' : 'ghost'}
             className="w-full justify-start gap-2.5 h-8 rounded-lg font-medium transition-all duration-200 hover:bg-accent/60"
             onClick={() => {
-              setCurrentPage('search')
+              setCurrentPage('files')
             }}
           >
-            <Search className="w-4 h-4" />
-            <span>智能搜索</span>
-            {searchResults.length > 0 && (
+         
+            <span>档案库</span>
+            {fileStats.total > 0 && (
               <span className="ml-auto text-xs bg-primary/20 text-primary px-1.5 py-0.5 rounded-md">
-                {searchResults.length}
+                {fileStats.total}
               </span>
             )}
           </Button>
-        </div> */}
+        </div>
 
         {/* 5. 档案库 */}
 

@@ -1,9 +1,9 @@
 'use client'
 
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Separator from '@radix-ui/react-separator'
@@ -11,7 +11,7 @@ import {
   PanelLeft, Search, FileText, Bot, User, Copy, Brain, Clock, 
   Zap, Wrench, Image, Eye, Settings, AlertCircle, CheckCircle,
   XCircle, Loader, Code, ArrowDown, Send, X, Minimize2, BookOpen,
-  ChevronDown, Lightbulb, Database
+  ChevronDown, Lightbulb
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -19,57 +19,12 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import { FileManager } from '@/components/FileManager'
-import { SearchArea } from '@/components/SearchArea'
 import type { FileStats } from '@/components/FileManager'
-
-// 复制必要的类型定义
-interface Message {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: string
-  sessionId?: string  // 添加可选的sessionId字段
-  execution_trace?: Array<{
-    step: number
-    action: string
-    status: 'planning' | 'executing' | 'completed' | 'failed'
-    timestamp: string
-    details?: any
-  }>
-  reasoning_steps?: Array<{
-    type: 'thought' | 'action' | 'observation' | 'reflection'
-    content: string
-    timestamp: string
-  }>
-  tools_used?: Array<{
-    name: string
-    result: string
-    duration?: number
-  }>
-  model_used?: string
-  mode?: 'llm' | 'agent' | 'chat'
-  execution_time?: number
-  steps_taken?: number
-  generated_image?: string
-  error_details?: any
-}
-
-interface Model {
-  id: string
-  name: string
-  owned_by: string
-}
-
-interface ChatHistory {
-  id: string
-  title: string
-  messages: Message[]
-  timestamp: string
-}
+import type { Message, Model, ChatHistory, AgentStatus } from '@/types'
 
 interface MainChatAreaProps {
   // 从原组件传递的所有props
-  currentPage: 'chat' | 'search' | 'files'
+  currentPage: 'chat' | 'files'
   sidebarOpen: boolean
   setSidebarOpen: (open: boolean) => void
   selectedModel: string
@@ -96,8 +51,6 @@ interface MainChatAreaProps {
   setEnableMemory: (enable: boolean) => void
   enableReflection: boolean
   setEnableReflection: (enable: boolean) => void
-  enableReactMode: boolean
-  setEnableReactMode: (enable: boolean) => void
   disableHistory: boolean
   setDisableHistory: (disable: boolean) => void
   compactMode: boolean
@@ -122,15 +75,9 @@ interface MainChatAreaProps {
   setShowToolDetails: React.Dispatch<React.SetStateAction<{[messageId: string]: boolean}>>
   fileStats: FileStats
   setFileStats: (stats: FileStats) => void
-  searchResults: any[]
-  setSearchResults: (results: any[]) => void
-  searchQuery: string
-  setSearchQuery: (query: string) => void
-  isSearching: boolean
-  searchChatHistory: (query: string) => void
   chatHistory: ChatHistory[]
   loadChat: (chat: ChatHistory) => void
-  setCurrentPage: (page: 'chat' | 'search' | 'files') => void
+  setCurrentPage: (page: 'chat' | 'files') => void
   copyMessage: (content: string) => void
   scrollToBottom: () => void
   showScrollToBottom: boolean
@@ -138,20 +85,7 @@ interface MainChatAreaProps {
   messagesEndRef: React.RefObject<HTMLDivElement | null>
   scrollContainerRef: React.RefObject<HTMLDivElement | null>
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
-  agentStatus?: {[messageId: string]: {
-    currentStep?: string
-    totalSteps?: number
-    isReflecting?: boolean
-    toolsInUse?: string[]
-    memoryActive?: boolean
-    reactPhase?: string
-    reactSteps?: Array<{
-      type: string
-      label: string
-      complete: boolean
-      enabled?: boolean
-    }>
-  }}
+  agentStatus?: {[messageId: string]: AgentStatus}
   handleKeyDown: (e: React.KeyboardEvent) => void
   handleCompositionStart: (e: React.CompositionEvent) => void
   handleCompositionUpdate: (e: React.CompositionEvent) => void
@@ -174,14 +108,13 @@ export function MainChatArea({
   models, apiStatus, messages, isLoading, loadingSessionId, currentLoadingModel, input, setInput, sendMessage,
   cancelRequest, useAgent, setUseAgent, enableSearch, setEnableSearch,
   enableMcp, setEnableMcp, enableMemory, setEnableMemory, enableReflection,
-  setEnableReflection, enableReactMode, setEnableReactMode, disableHistory,
+  setEnableReflection, disableHistory,
   setDisableHistory, compactMode, setCompactMode, showTimestamps, currentChatId, setCurrentChatId,
   setShowTimestamps, showModelInfo, setShowModelInfo, showPerformanceMetrics,
   setShowPerformanceMetrics, rawResponses, setRawResponses, expandedJson, setExpandedJson,
   showReasoningSteps, setShowReasoningSteps, showExecutionTrace,
   setShowExecutionTrace, showAgentDetails, setShowAgentDetails,
-  showToolDetails, setShowToolDetails, fileStats, setFileStats, searchResults,
-  setSearchResults, searchQuery, setSearchQuery, isSearching, searchChatHistory,
+  showToolDetails, setShowToolDetails, fileStats, setFileStats,
   chatHistory, loadChat, setCurrentPage, copyMessage, scrollToBottom,
   showScrollToBottom, isAtBottom, messagesEndRef, scrollContainerRef,
   textareaRef, handleKeyDown, handleCompositionStart, handleCompositionUpdate,
@@ -208,7 +141,6 @@ export function MainChatArea({
       const savedEnableMcp = localStorage.getItem('chatOptions_enableMcp');
       const savedEnableMemory = localStorage.getItem('chatOptions_enableMemory');
       const savedEnableReflection = localStorage.getItem('chatOptions_enableReflection');
-      const savedEnableReactMode = localStorage.getItem('chatOptions_enableReactMode');
       const savedDisableHistory = localStorage.getItem('chatOptions_disableHistory');
       const savedCompactMode = localStorage.getItem('chatOptions_compactMode');
       const savedShowTimestamps = localStorage.getItem('chatOptions_showTimestamps');
@@ -225,7 +157,6 @@ export function MainChatArea({
       if (savedEnableMcp !== null) setEnableMcp(savedEnableMcp === 'true');
       if (savedEnableMemory !== null) setEnableMemory(savedEnableMemory === 'true');
       if (savedEnableReflection !== null) setEnableReflection(savedEnableReflection === 'true');
-      if (savedEnableReactMode !== null) setEnableReactMode(savedEnableReactMode === 'true');
       if (savedDisableHistory !== null) setDisableHistory(savedDisableHistory === 'true');
       if (savedCompactMode !== null) setCompactMode(savedCompactMode === 'true');
       if (savedShowTimestamps !== null) setShowTimestamps(savedShowTimestamps === 'true');
@@ -234,8 +165,8 @@ export function MainChatArea({
       if (savedSelectedModel && models.some(m => m.id === savedSelectedModel)) {
         setSelectedModel(savedSelectedModel);
       }
-      if (savedCurrentPage && ['chat', 'search', 'files'].includes(savedCurrentPage)) {
-        setCurrentPage(savedCurrentPage as 'chat' | 'search' | 'files');
+      if (savedCurrentPage && ['chat', 'files'].includes(savedCurrentPage)) {
+        setCurrentPage(savedCurrentPage as 'chat' | 'files');
       }
       
       // 恢复当前会话ID，如果有效的话
@@ -314,7 +245,7 @@ export function MainChatArea({
   }, [
     hasRestoredSettings, 
     setUseAgent, setEnableSearch, setEnableMcp, setEnableMemory, 
-    setEnableReflection, setEnableReactMode, setDisableHistory, 
+    setEnableReflection, setDisableHistory, 
     setCompactMode, setShowTimestamps, setShowModelInfo, 
     setShowPerformanceMetrics, setSelectedModel, setCurrentPage,
     setCurrentChatId, setExpandedJson, setShowAgentDetails,
@@ -338,7 +269,6 @@ export function MainChatArea({
         localStorage.setItem('chatOptions_enableMcp', enableMcp.toString());
         localStorage.setItem('chatOptions_enableMemory', enableMemory.toString());
         localStorage.setItem('chatOptions_enableReflection', enableReflection.toString());
-        localStorage.setItem('chatOptions_enableReactMode', enableReactMode.toString());
         localStorage.setItem('chatOptions_disableHistory', disableHistory.toString());
         localStorage.setItem('chatOptions_compactMode', compactMode.toString());
         localStorage.setItem('chatOptions_showTimestamps', showTimestamps.toString());
@@ -428,7 +358,7 @@ export function MainChatArea({
     return () => clearTimeout(saveSettingsId);
   }, [
     hasRestoredSettings, useAgent, enableSearch, enableMcp, enableMemory, 
-    enableReflection, enableReactMode, disableHistory, compactMode, 
+    enableReflection, disableHistory, compactMode, 
     showTimestamps, showModelInfo, showPerformanceMetrics, selectedModel, 
     currentChatId, currentPage, expandedJson, showAgentDetails, 
     showReasoningSteps, showExecutionTrace, showToolDetails, 
@@ -454,12 +384,6 @@ export function MainChatArea({
               <div className="flex items-center gap-4">
             {/* 页面标题 */}
             <div className="flex items-center gap-2">
-              {currentPage === 'search' && (
-                <>
-                  <Search className="w-5 h-5 text-blue-500" />
-                  <span className="font-semibold">智能搜索</span>
-                </>
-              )}
               {currentPage === 'files' && (
                 <>
                   <FileText className="w-5 h-5 text-purple-500" />
@@ -590,13 +514,13 @@ export function MainChatArea({
                 </div>
                 
                 {/* 分隔线 */}
-                {(enableSearch || enableMcp || (useAgent && (enableMemory || enableReflection || enableReactMode)) || (isLoading && (!loadingSessionId || loadingSessionId === currentChatId))) && (
+                {(enableSearch || enableMcp || (useAgent && (enableMemory || enableReflection)) || (isLoading && (!loadingSessionId || loadingSessionId === currentChatId))) && (
                   <div className="w-px h-3 bg-border/40" />
                 )}
                 
                 {/* 功能状态图标组 */}
                 <AnimatePresence>
-                  {(enableSearch || enableMcp || (useAgent && (enableMemory || enableReflection || enableReactMode)) || (isLoading && (!loadingSessionId || loadingSessionId === currentChatId))) && (
+                  {(enableSearch || enableMcp || (useAgent && (enableMemory || enableReflection)) || (isLoading && (!loadingSessionId || loadingSessionId === currentChatId))) && (
                     <motion.div
                       initial={{ opacity: 0, width: 0 }}
                       animate={{ opacity: 1, width: "auto" }}
@@ -648,17 +572,6 @@ export function MainChatArea({
                           <AlertCircle className="w-2.5 h-2.5" />
                         </motion.div>
                       )}
-                      {useAgent && enableReactMode && (
-                        <motion.div
-                          initial={{ scale: 0 }}
-                          animate={{ scale: 1 }}
-                          whileHover={{ scale: 1.1 }}
-                          className="flex items-center justify-center w-5 h-5 rounded-md bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400"
-                          title="ReAct模式已启用"
-                        >
-                          <Zap className="w-2.5 h-2.5" />
-                        </motion.div>
-                      )}
                       {isLoading && loadingSessionId === currentChatId && (
                         <motion.div
                           initial={{ scale: 0 }}
@@ -687,20 +600,7 @@ export function MainChatArea({
           data-scroll-container="true"
           className="flex-1 overflow-y-auto scroll-container"
         >
-          {currentPage === 'search' ? (
-            // 智能搜索页面
-            <SearchArea
-              searchResults={searchResults}
-              setSearchResults={setSearchResults}
-              searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
-              isSearching={isSearching}
-              searchChatHistory={searchChatHistory}
-              chatHistory={chatHistory}
-              loadChat={loadChat}
-              setCurrentPage={setCurrentPage}
-            />
-          ) : currentPage === 'files' ? (
+          {currentPage === 'files' ? (
             // 文件管理页面
             <FileManager 
               onStatsUpdate={setFileStats}
@@ -1138,7 +1038,7 @@ export function MainChatArea({
                                     </span>
                                   </div>
                                   <div className="text-sm text-foreground whitespace-pre-wrap">
-                                    {step.content}
+                                    {step.content || (step as any).result || `工具: ${(step as any).tool || '未知'}`}
                                   </div>
                                 </div>
                               </div>
@@ -1338,393 +1238,220 @@ export function MainChatArea({
                 </div>
                 </MessageErrorBoundary>
               ))}
-                {/* Enhanced Loading State for Agent Mode */}
+                {/* Loading State - Matches completed message style */}
               {isLoading && (!loadingSessionId || loadingSessionId === currentChatId) && (
-                <div className="py-6">
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="group py-6"
+                >
                   <div className="flex gap-4">
-                    <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center border">
-                      <Bot className="w-4 h-4 text-muted-foreground" />
+                    {/* Avatar - Same as completed messages */}
+                    <div className="flex-shrink-0">
+                      <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center border">
+                        <Bot className="w-4 h-4 text-muted-foreground" />
+                      </div>
                     </div>
-                    <div className="flex-1 space-y-3">
-                      <div className="flex items-center gap-2">
-                        <div className="text-sm font-medium text-foreground">AI助手</div>
-                        {useAgent && (
-                          <div className="flex items-center gap-1 px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-xs">
-                            <Brain className="w-3 h-3 animate-pulse" />
-                            <span>Agent模式</span>
-                          </div>
-                        )}
-                      </div>
-                      
-                      {/* 基础加载指示 */}
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1">
-                          <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"></div>
-                          <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce [animation-delay:0.1s]"></div>
-                          <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                    
+                    <div className="flex-1 min-w-0 space-y-2">
+                      {/* Header - Same style as completed messages */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium text-foreground">AI助手</span>
+                        
+                        {/* Status badges - Same pill style as completed messages */}
+                        <div className="flex items-center gap-1.5 text-xs flex-wrap">
+                          {useAgent && (
+                            <motion.div 
+                              initial={{ scale: 0.8, opacity: 0 }}
+                              animate={{ scale: 1, opacity: 1 }}
+                              className="flex items-center gap-1 px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full"
+                            >
+                              <Brain className="w-3 h-3" />
+                              <span>Agent</span>
+                            </motion.div>
+                          )}
+                          {currentLoadingModel && (
+                            <div className="px-2 py-0.5 bg-muted/70 text-muted-foreground rounded-full">
+                              {currentLoadingModel}
+                            </div>
+                          )}
+                          {/* Processing indicator badge */}
+                          <motion.div 
+                            initial={{ scale: 0.8, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            className="flex items-center gap-1.5 px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full"
+                          >
+                            <motion.div
+                              animate={{ rotate: 360 }}
+                              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                              className="w-3 h-3 border-1.5 border-green-500 border-t-transparent rounded-full"
+                            />
+                            <span>處理中</span>
+                          </motion.div>
                         </div>
-                        <span className="text-sm text-muted-foreground">
-                          {useAgent ? '正在分析和规划...' : '正在思考...'}
-                        </span>
                       </div>
                       
-                      {/* Agent模式增强加载指示 - 动态根据agentStatus更新 */}
-                      {useAgent && (
-                        <div className="space-y-2 p-3 bg-muted/30 rounded-lg">
-                          <div className="text-xs font-medium text-muted-foreground mb-2">Agent处理状态</div>
-                          <div className="space-y-2">
-                            {/* 根据agentStatus动态显示处理状态 */}
-                            {agentStatus && loadingSessionId && 
-                             (() => {
-                               // 直接使用loadingSessionId作为key查找状态
-                               // 这样可以获取到当前正在处理中的会话状态
-                               return agentStatus[loadingSessionId];
-                             })() ? (
-                              <>
-                                {(() => {
-                                  // 直接获取当前加载会话的状态
-                                  const status = agentStatus[loadingSessionId];
-                                  
-                                  // 确保状态对象存在
-                                  if (!status) return null;
-                                  
-                                  // 提取需要的状态值，并提供默认值
-                                  const totalSteps = status.totalSteps || 0;
-                                  const reactPhase = status.reactPhase || '';
-                                  const reactSteps = status.reactSteps || [];
-                                  const memoryActive = status.memoryActive || false;
-                                  const toolsInUse = status.toolsInUse || [];
-                                  
-                                  return (
-                                    <>
-                                      {/* 执行轨迹样式的步骤显示 */}
-                                      <div className="space-y-2">
-                                        {/* 步骤1: 初始化 */}
-                                        <div className="flex gap-3 items-center">
-                                          <div className="flex-shrink-0">
-                                            {totalSteps >= 1 ? (
-                                              <CheckCircle className="w-3 h-3 text-green-500" />
-                                            ) : (
-                                              <Loader className="w-3 h-3 animate-spin text-blue-500" />
-                                            )}
-                                          </div>
-                                          <div className="flex-1">
-                                            <div className="flex items-center gap-1 text-xs">
-                                              <span className={`font-medium ${totalSteps >= 1 ? "text-green-600 dark:text-green-400" : "text-blue-600 dark:text-blue-400"}`}>
-                                                初始化Agent
-                                              </span>
-                                              {totalSteps >= 1 && (
-                                                <span className="text-xs text-muted-foreground ml-1">✓</span>
-                                              )}
-                                            </div>
-                                          </div>
-                                        </div>
-                                        
-                                        {/* 步骤2: 分析用户请求 */}
-                                        <div className="flex gap-3 items-center">
-                                          <div className="flex-shrink-0">
-                                            {totalSteps >= 2 ? (
-                                              <CheckCircle className="w-3 h-3 text-green-500" />
-                                            ) : totalSteps >= 1 ? (
-                                              <Loader className="w-3 h-3 animate-spin text-blue-500" />
-                                            ) : (
-                                              <Clock className="w-3 h-3 text-muted-foreground opacity-40" />
-                                            )}
-                                          </div>
-                                          <div className="flex-1">
-                                            <div className="flex items-center gap-1 text-xs">
-                                              <span className={`font-medium 
-                                                ${totalSteps >= 2 ? "text-green-600 dark:text-green-400" : 
-                                                  totalSteps >= 1 ? "text-blue-600 dark:text-blue-400" : 
-                                                  "text-muted-foreground opacity-40"}`}>
-                                                分析用户请求
-                                              </span>
-                                              {totalSteps >= 2 && (
-                                                <span className="text-xs text-muted-foreground ml-1">✓</span>
-                                              )}
-                                            </div>
-                                          </div>
-                                        </div>
-                                        
-                                        {/* 步骤3: 检索记忆 */}
-                                        {memoryActive && (
-                                          <div className="flex gap-3 items-center">
-                                            <div className="flex-shrink-0">
-                                              {totalSteps >= 3 ? (
-                                                <CheckCircle className="w-3 h-3 text-green-500" />
-                                              ) : totalSteps >= 2 ? (
-                                                <Loader className="w-3 h-3 animate-spin text-blue-500" />
-                                              ) : (
-                                                <Clock className="w-3 h-3 text-muted-foreground opacity-40" />
-                                              )}
-                                            </div>
-                                            <div className="flex-1">
-                                              <div className="flex items-center gap-1 text-xs">
-                                                <Brain className="w-3 h-3 mr-1" />
-                                                <span className={`font-medium 
-                                                  ${totalSteps >= 3 ? "text-green-600 dark:text-green-400" : 
-                                                    totalSteps >= 2 ? "text-blue-600 dark:text-blue-400" : 
-                                                    "text-muted-foreground opacity-40"}`}>
-                                                  检索相关记忆
-                                                </span>
-                                                {totalSteps >= 3 && (
-                                                  <span className="text-xs text-muted-foreground ml-1">✓</span>
-                                                )}
-                                              </div>
-                                            </div>
-                                          </div>
-                                        )}
-                                        
-                                        {/* 步骤4: 准备工具 */}
-                                        <div className="flex gap-3 items-center">
-                                          <div className="flex-shrink-0">
-                                            {totalSteps >= 4 ? (
-                                              <CheckCircle className="w-3 h-3 text-green-500" />
-                                            ) : totalSteps >= 3 ? (
-                                              <Loader className="w-3 h-3 animate-spin text-blue-500" />
-                                            ) : (
-                                              <Clock className="w-3 h-3 text-muted-foreground opacity-40" />
-                                            )}
-                                          </div>
-                                          <div className="flex-1">
-                                            <div className="flex items-center gap-1 text-xs">
-                                              <Wrench className="w-3 h-3 mr-1" />
-                                              <span className={`font-medium 
-                                                ${totalSteps >= 4 ? "text-green-600 dark:text-green-400" : 
-                                                  totalSteps >= 3 ? "text-blue-600 dark:text-blue-400" : 
-                                                  "text-muted-foreground opacity-40"}`}>
-                                                准备工具
-                                              </span>
-                                              {totalSteps >= 4 && (
-                                                <span className="text-xs text-muted-foreground ml-1">✓</span>
-                                              )}
-                                            </div>
-                                            
-                                            {/* 显示工具使用情况 */}
-                                            {toolsInUse && 
-                                             toolsInUse.length > 0 && 
-                                             totalSteps >= 3 && (
-                                              <div className="mt-1 ml-4 flex flex-wrap gap-1">
-                                                {toolsInUse.map((tool, index) => (
-                                                  <span key={index} className="px-1.5 py-0.5 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded">
-                                                    {tool}
-                                                  </span>
-                                                ))}
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
-                                        
-                                        {/* 步骤5: React推理循环 - 详细展示 */}
-                                        <div className="flex gap-3">
-                                          <div className="flex-shrink-0 mt-1">
-                                            {totalSteps >= 5 ? (
-                                              <CheckCircle className="w-3 h-3 text-green-500" />
-                                            ) : totalSteps >= 4 ? (
-                                              <Loader className="w-3 h-3 animate-spin text-blue-500" />
-                                            ) : (
-                                              <Clock className="w-3 h-3 text-muted-foreground opacity-40" />
-                                            )}
-                                          </div>
-                                          <div className="flex-1">
-                                            <div className="flex items-center gap-1 text-xs">
-                                              <Zap className="w-3 h-3 mr-1" />
-                                              <span className={`font-medium 
-                                                ${totalSteps >= 5 ? "text-green-600 dark:text-green-400" : 
-                                                  totalSteps >= 4 ? "text-blue-600 dark:text-blue-400" : 
-                                                  "text-muted-foreground opacity-40"}`}>
-                                                React推理循环
-                                              </span>
-                                              {totalSteps >= 5 && (
-                                                <span className="text-xs text-muted-foreground ml-1">✓</span>
-                                              )}
-                                            </div>
-                                            
-                                            {/* React循环的子步骤 - 使用reactSteps数据 */}
-                                            {totalSteps >= 4 && (
-                                              <div className="mt-1 ml-4 space-y-1 border-l-2 border-blue-200 dark:border-blue-800 pl-2">
-                                                {reactSteps && Array.isArray(reactSteps) && reactSteps.length > 0 ? (
-                                                  /* 如果有reactSteps数据，使用它 */
-                                                  <>
-                                                    {reactSteps.map((step, index) => {
-                                                      // 确保step是有效对象
-                                                      if (!step || typeof step !== 'object') {
-                                                        return null;
-                                                      }
-                                                      
-                                                      // 跳过未启用的步骤
-                                                      if (step.enabled === false) {
-                                                        return null;
-                                                      }
-                                                      
-                                                      return (
-                                                        <div key={index} className="flex items-center gap-1 text-[10px]">
-                                                          {step.type === 'thought' && (
-                                                            <Brain className={`w-2 h-2 ${step.complete ? 'text-blue-500' : 'text-muted-foreground opacity-40'}`} />
-                                                          )}
-                                                          {step.type === 'decision' && (
-                                                            <AlertCircle className={`w-2 h-2 ${step.complete ? 'text-orange-500' : 'text-muted-foreground opacity-40'}`} />
-                                                          )}
-                                                          {step.type === 'reflection' && (
-                                                            <Lightbulb className={`w-2 h-2 ${step.complete ? 'text-amber-500' : 'text-muted-foreground opacity-40'}`} />
-                                                          )}
-                                                          {step.type === 'action' && (
-                                                            <Zap className={`w-2 h-2 ${step.complete ? 'text-purple-500' : 'text-muted-foreground opacity-40'}`} />
-                                                          )}
-                                                          
-                                                          <span className={`${
-                                                            step.complete ? 
-                                                              (step.type === 'thought' ? 'text-blue-600 dark:text-blue-400' : 
-                                                               step.type === 'decision' ? 'text-orange-600 dark:text-orange-400' : 
-                                                               step.type === 'reflection' ? 'text-amber-600 dark:text-amber-400' : 
-                                                               'text-purple-600 dark:text-purple-400')
-                                                              : 'text-muted-foreground opacity-40'
-                                                          }`}>
-                                                            {step.label || '处理中...'}
-                                                            {step.complete && (
-                                                              <span className="ml-1 opacity-60">✓</span>
-                                                            )}
-                                                          </span>
-                                                        </div>
-                                                      );
-                                                    })}
-                                                  </>
-                                                ) : (
-                                                  /* 如果没有reactSteps数据，使用静态显示 */
-                                                  <>
-                                                    {/* 思考步骤 */}
-                                                    <div className="flex items-center gap-1 text-[10px]">
-                                                      <Brain className="w-2 h-2 text-blue-500" />
-                                                      <span className="text-blue-600 dark:text-blue-400">
-                                                        思考: 分析问题要点和解决方案
-                                                      </span>
-                                                    </div>
-                                                    
-                                                    {/* 决策步骤 */}
-                                                    <div className="flex items-center gap-1 text-[10px]">
-                                                      <AlertCircle className="w-2 h-2 text-orange-500" />
-                                                      <span className="text-orange-600 dark:text-orange-400">
-                                                        决策: 确定最佳应对策略
-                                                      </span>
-                                                    </div>
-                                                    
-                                                    {/* 反思步骤 - 只在启用反思时显示 */}
-                                                    {status.isReflecting && (
-                                                      <div className="flex items-center gap-1 text-[10px]">
-                                                        <Lightbulb className="w-2 h-2 text-amber-500" />
-                                                        <span className="text-amber-600 dark:text-amber-400">
-                                                          反思: 评估当前解决方案质量
-                                                        </span>
-                                                      </div>
-                                                    )}
-                                                    
-                                                    {/* 行动步骤 */}
-                                                    <div className="flex items-center gap-1 text-[10px]">
-                                                      <Zap className="w-2 h-2 text-purple-500" />
-                                                      <span className="text-purple-600 dark:text-purple-400">
-                                                        行动: 生成最终回复
-                                                      </span>
-                                                    </div>
-                                                  </>
-                                                )}
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
-                                      </div>
-                                      
-                                      {/* 进度条 */}
-                                      {totalSteps > 0 && (
-                                        <div className="mt-1">
-                                          <div className="flex items-center justify-between text-xs mb-1">
-                                            <span className="text-muted-foreground">处理进度</span>
-                                            <span className="text-muted-foreground">{totalSteps}/5</span>
-                                          </div>
-                                          <div className="w-full bg-muted h-1 rounded-full overflow-hidden">
-                                            <div 
-                                              className="bg-blue-500 h-1 rounded-full transition-all duration-300 ease-out" 
-                                              style={{ width: `${Math.min(100, (totalSteps / 5) * 100)}%` }}
-                                            ></div>
-                                          </div>
-                                        </div>
-                                      )}
-                                    </>
-                                  );
-                                })()}
-                              </>
-                            ) : (
-                              <>
-                                {/* 默认显示 - 当没有agentStatus数据时 */}
-                                <div className="flex items-center gap-2 text-xs">
-                                  <Loader className="w-3 h-3 animate-spin text-blue-500" />
-                                  <span>分析用户请求...</span>
+                      {/* Agent Status Content */}
+                      {(() => {
+                        const status = agentStatus?.[loadingSessionId || ''] || 
+                                      agentStatus?.[currentChatId || ''] ||
+                                      (Object.keys(agentStatus || {}).length > 0 ? Object.values(agentStatus || {})[0] : null)
+                        
+                        const currentStep = status?.currentStep || '正在思考...'
+                        const totalSteps = status?.totalSteps || 0
+                        const reactSteps = status?.reactSteps || []
+                        const toolsInUse = status?.toolsInUse || []
+                        
+                        return (
+                          <div className="space-y-3">
+                            {/* Current step text with animation */}
+                            <motion.div 
+                              key={currentStep}
+                              initial={{ opacity: 0, x: -5 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              className="text-sm text-foreground"
+                            >
+                              {currentStep}
+                            </motion.div>
+                            
+                            {/* Tools used - Enhanced display */}
+                            {toolsInUse.length > 0 && (
+                              <motion.div 
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                className="p-2.5 bg-muted/30 rounded-lg border"
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <Wrench className="w-4 h-4 text-muted-foreground" />
+                                    <span className="text-sm font-medium text-muted-foreground">工具調用</span>
+                                  </div>
+                                  <span className="text-xs text-muted-foreground">{toolsInUse.length} 個工具</span>
                                 </div>
-                                {enableMemory && (
-                                  <div className="flex items-center gap-2 text-xs opacity-60">
-                                    <Brain className="w-3 h-3" />
-                                    <span>检索相关记忆...</span>
-                                  </div>
-                                )}
-                                {enableMcp && (
-                                  <div className="flex items-center gap-2 text-xs opacity-60">
+                                <div className="flex flex-wrap gap-1.5">
+                                  {toolsInUse.map((tool, index) => (
+                                    <motion.div 
+                                      key={`${tool}-${index}`}
+                                      initial={{ scale: 0.8, opacity: 0 }}
+                                      animate={{ scale: 1, opacity: 1 }}
+                                      transition={{ delay: index * 0.05 }}
+                                      className="flex items-center gap-1.5 px-2 py-1 bg-background rounded-md text-xs border shadow-sm"
+                                    >
+                                      {tool.includes('search') || tool.includes('Search') ? (
+                                        <Search className="w-3 h-3 text-blue-500" />
+                                      ) : tool.includes('image') || tool.includes('Image') ? (
+                                        <Image className="w-3 h-3 text-purple-500" />
+                                      ) : tool.includes('file') || tool.includes('File') || tool.includes('read') || tool.includes('Read') ? (
+                                        <FileText className="w-3 h-3 text-orange-500" />
+                                      ) : tool.includes('code') || tool.includes('Code') ? (
+                                        <Code className="w-3 h-3 text-green-500" />
+                                      ) : (
+                                        <Wrench className="w-3 h-3 text-muted-foreground" />
+                                      )}
+                                      <span className="font-medium">{tool}</span>
+                                    </motion.div>
+                                  ))}
+                                </div>
+                              </motion.div>
+                            )}
+                            
+                            {/* Steps timeline - Enhanced version */}
+                            {reactSteps.length > 0 && (
+                              <div className="space-y-1">
+                                {reactSteps.slice(-5).map((step, index) => {
+                                  const isLatest = index === Math.min(reactSteps.length, 5) - 1
+                                  const hasToolResult = step.toolResult && step.type === 'observation'
+                                  return (
+                                    <motion.div 
+                                      key={`${step.type}-${index}`}
+                                      initial={{ opacity: 0, x: -10 }}
+                                      animate={{ opacity: 1, x: 0 }}
+                                      transition={{ delay: index * 0.03 }}
+                                      className="space-y-1"
+                                    >
+                                      <div className={cn(
+                                        "flex items-center gap-2 text-xs py-1.5 px-2 rounded-md transition-colors",
+                                        isLatest ? "bg-muted/50" : "hover:bg-muted/30"
+                                      )}>
+                                        <div className={cn(
+                                          "w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0",
+                                          step.type === 'thought' && "bg-blue-100 dark:bg-blue-900/30",
+                                          step.type === 'action' && "bg-green-100 dark:bg-green-900/30",
+                                          step.type === 'observation' && "bg-purple-100 dark:bg-purple-900/30",
+                                          step.type === 'reflection' && "bg-amber-100 dark:bg-amber-900/30"
+                                        )}>
+                                          {step.type === 'thought' && <Brain className="w-2.5 h-2.5 text-blue-600 dark:text-blue-400" />}
+                                          {step.type === 'action' && <Zap className="w-2.5 h-2.5 text-green-600 dark:text-green-400" />}
+                                          {step.type === 'observation' && <Eye className="w-2.5 h-2.5 text-purple-600 dark:text-purple-400" />}
+                                          {step.type === 'reflection' && <Lightbulb className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400" />}
+                                        </div>
+                                        <span className={cn(
+                                          "flex-1 truncate",
+                                          isLatest ? "text-foreground font-medium" : "text-muted-foreground"
+                                        )}>
+                                          {step.label}
+                                        </span>
+                                        {step.toolName && (
+                                          <span className="text-muted-foreground text-[10px] px-1.5 py-0.5 bg-muted rounded">
+                                            {step.toolName}
+                                          </span>
+                                        )}
+                                        {step.complete && (
+                                          <motion.div
+                                            initial={{ scale: 0 }}
+                                            animate={{ scale: 1 }}
+                                          >
+                                            <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+                                          </motion.div>
+                                        )}
+                                      </div>
+                                      {/* Tool result preview for observation steps */}
+                                      {hasToolResult && isLatest && (
+                                        <motion.div
+                                          initial={{ opacity: 0, height: 0 }}
+                                          animate={{ opacity: 1, height: 'auto' }}
+                                          className="ml-7 px-2 py-1.5 bg-muted/30 rounded border-l-2 border-purple-400 text-[11px] text-muted-foreground"
+                                        >
+                                          <div className="line-clamp-2 break-words">
+                                            {typeof step.toolResult === 'string' 
+                                              ? step.toolResult.slice(0, 150) + (step.toolResult.length > 150 ? '...' : '')
+                                              : JSON.stringify(step.toolResult).slice(0, 150) + '...'
+                                            }
+                                          </div>
+                                        </motion.div>
+                                      )}
+                                    </motion.div>
+                                  )
+                                })}
+                              </div>
+                            )}
+                            
+                            {/* Progress info - Enhanced */}
+                            {totalSteps > 0 && (
+                              <div className="flex items-center gap-2 text-xs">
+                                <div className="flex items-center gap-1 px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full">
+                                  <Zap className="w-3 h-3" />
+                                  <span>{totalSteps} 步驟</span>
+                                </div>
+                                {toolsInUse.length > 0 && (
+                                  <div className="flex items-center gap-1 px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 rounded-full">
                                     <Wrench className="w-3 h-3" />
-                                    <span>准备工具...</span>
+                                    <span>{toolsInUse.length} 工具</span>
                                   </div>
                                 )}
-                                {enableReactMode && (
-                                  <div className="flex items-center gap-2 text-xs opacity-60">
-                                    <Zap className="w-3 h-3" />
-                                    <span>React推理循环...</span>
-                                  </div>
-                                )}
-                              </>
+                              </div>
                             )}
                           </div>
-                        </div>
-                      )}
-                      
-                      {/* 模型和设置信息 */}
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>使用模型: {isLoading && currentLoadingModel ? currentLoadingModel : selectedModel}</span>
-                        {enableSearch && (
-                          <>
-                            <span>•</span>
-                            <span className="flex items-center gap-1">
-                              <Search className="w-3 h-3" />
-                              搜索已启用
-                            </span>
-                          </>
-                        )}
-                        {useAgent && enableReflection && (
-                          <>
-                            <span>•</span>
-                            <span className="flex items-center gap-1">
-                              <AlertCircle className="w-3 h-3" />
-                              反思模式
-                            </span>
-                          </>
-                        )}
-                      </div>
+                        )
+                      })()}
                     </div>
                   </div>
-                </div>              )}
+                </motion.div>
+              )}
               
               <div ref={messagesEndRef} data-messages-end="true" />
             </div>
           )
-        ) : currentPage === 'search' ? (
-          // 智能搜索页面
-            <SearchArea
-              searchResults={searchResults}
-              setSearchResults={setSearchResults}
-              searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
-              isSearching={isSearching}
-              searchChatHistory={searchChatHistory}
-              chatHistory={chatHistory}
-              loadChat={loadChat}
-              setCurrentPage={setCurrentPage}
-            />
         ) : currentPage === 'files' ? (
           // 档案库页面
           <FileManager 
@@ -1991,7 +1718,7 @@ export function MainChatArea({
             <TooltipButton
               variant={enableReflection ? "default" : "secondary"}
               onClick={() => setEnableReflection(!enableReflection)}
-              tooltip="启用自我反思模式"
+              tooltip="启用定期反思（每N步自动反思提升准确性）"
               className={cn(
                 "h-8 px-3 text-xs font-medium rounded-xl",
                 "shrink-0 whitespace-nowrap",
@@ -2002,22 +1729,6 @@ export function MainChatArea({
             >
               <AlertCircle className="w-3 h-3 mr-1.5" />
               反思
-            </TooltipButton>
-            
-            <TooltipButton
-              variant={enableReactMode ? "default" : "secondary"}
-              onClick={() => setEnableReactMode(!enableReactMode)}
-              tooltip="推理-行动循环模式"
-              className={cn(
-                "h-8 px-3 text-xs font-medium rounded-xl",
-                "shrink-0 whitespace-nowrap",
-                enableReactMode 
-                  ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md" 
-                  : "bg-secondary/80 text-secondary-foreground hover:bg-secondary/90"
-              )}
-            >
-              <Zap className="w-3 h-3 mr-1.5" />
-              ReAct
             </TooltipButton>
           </motion.div>
         ) : (
