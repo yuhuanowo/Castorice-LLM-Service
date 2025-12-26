@@ -21,7 +21,9 @@ from app.utils.logger import logger
 from app.core.config import get_settings
 from app.services.llm_service import llm_service
 from app.services.memory_service import memory_service
-from app.utils.tools import generate_image, search_duckduckgo
+from app.utils.tools import (
+    assess_task_completion
+)
 from app.models.mongodb import (
     get_chat_logs, 
     update_user_memory, 
@@ -110,12 +112,21 @@ class AgentService:
     - 支持工具調用的自動選擇和執行
     - 流式輸出每個思考步驟
     - 智能反思和自我糾正
+    - Ground Truth 驗證：每步執行後驗證工具結果的有效性
+    - 動態反思觸發：基於結果質量而非僅固定步數觸發反思
+    - 任務完成自評估：LLM 顯式確認任務完成度
+    - 多樣化停止條件：超時、重複檢測、信心度評估等
     """
     
     def __init__(self):
-        self.max_steps = settings.AGENT_MAX_STEPS
-        self.reflection_threshold = settings.AGENT_REFLECTION_THRESHOLD
-        self.confidence_threshold = settings.AGENT_CONFIDENCE_THRESHOLD
+        self.max_steps = getattr(settings, 'AGENT_MAX_STEPS', 10)
+        self.reflection_threshold = getattr(settings, 'AGENT_REFLECTION_THRESHOLD', 3)  # 每執行多少步驟反思
+        self.confidence_threshold = getattr(settings, 'AGENT_CONFIDENCE_THRESHOLD', 0.7)
+        self.max_execution_time = getattr(settings, 'AGENT_MAX_EXECUTION_TIME', 300)  # 最大執行時間（秒）
+        self.max_consecutive_failures = getattr(settings, 'AGENT_MAX_CONSECUTIVE_FAILURES', 3)  # 連續失敗上限
+        self.enable_ground_truth_validation = getattr(settings, 'AGENT_ENABLE_GROUND_TRUTH', True)  # Ground Truth 驗證
+        self.enable_dynamic_reflection = getattr(settings, 'AGENT_ENABLE_DYNAMIC_REFLECTION', True)  # 動態反思
+        self.enable_self_evaluation = getattr(settings, 'AGENT_ENABLE_SELF_EVALUATION', True)  # 自我評估/完成度評估
     
     def _get_system_prompt(self, enable_mcp: bool = True) -> Dict[str, str]:
         """
@@ -169,7 +180,7 @@ class AgentService:
         model_name: str,
         tools: Optional[List[Dict[str, Any]]] = None,
         on_step: Optional[Callable] = None,
-        max_retries: int = 3
+        max_retries: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         發送 LLM 請求，支持自動重試
@@ -179,11 +190,15 @@ class AgentService:
             model_name: 模型名稱
             tools: 工具定義
             on_step: 步驟回調函數
-            max_retries: 最大重試次數
+            max_retries: 最大重試次數（默認使用配置值）
             
         Returns:
             LLM 響應
         """
+        # 使用配置的重試次數
+        if max_retries is None:
+            max_retries = getattr(settings, 'AGENT_MAX_LLM_RETRIES', 3)
+        
         retry_count = 0
         while retry_count <= max_retries:
             try:
@@ -269,6 +284,12 @@ class AgentService:
         execution_trace = []
         reasoning_steps = []
         tools_used = []
+        
+        # Anthropic 最佳實踐：多樣化停止條件追蹤
+        consecutive_failures = 0  # 連續失敗計數
+        last_tool_results = []  # 上次工具結果（用於檢測重複）
+        tool_result_history = []  # 工具結果歷史（用於檢測循環）
+        task_completion_confidence = 0.0  # 任務完成信心度
         
         # 處理工具配置
         enable_search = True
@@ -359,16 +380,63 @@ class AgentService:
             
             # 主執行循環 - LLM 自主決策
             final_response = None
+            stop_reason = None  # 記錄停止原因
             
             while steps_taken < max_steps_limit:
                 steps_taken += 1
+                current_time = time.time()
+                
+                # === 多樣化停止條件 ===
+                
+                # 停止條件 1: 執行超時
+                if current_time - start_time > self.max_execution_time:
+                    stop_reason = "execution_timeout"
+                    logger.warning(f"Agent 執行超時 ({self.max_execution_time}秒)")
+                    if on_step:
+                        await on_step(StreamEvent(
+                            status="timeout",
+                            message=f"執行時間超過 {self.max_execution_time} 秒，正在生成總結...",
+                            step=steps_taken
+                        ).to_dict())
+                    break
+                
+                # 停止條件 2: 連續失敗過多
+                if consecutive_failures >= self.max_consecutive_failures:
+                    stop_reason = "consecutive_failures"
+                    logger.warning(f"Agent 連續失敗 {consecutive_failures} 次，停止執行")
+                    if on_step:
+                        await on_step(StreamEvent(
+                            status="error",
+                            message=f"連續失敗 {consecutive_failures} 次，正在生成總結...",
+                            step=steps_taken
+                        ).to_dict())
+                    break
+                
+                # 停止條件 3: 檢測到循環（重複相同工具調用）
+                loop_detection_window = getattr(settings, 'AGENT_LOOP_DETECTION_WINDOW', 3)
+                if len(tool_result_history) >= loop_detection_window:
+                    recent_results = tool_result_history[-loop_detection_window:]
+                    if len(set(str(r) for r in recent_results)) == 1:
+                        stop_reason = "loop_detected"
+                        logger.warning("檢測到工具調用循環，停止執行")
+                        if on_step:
+                            await on_step(StreamEvent(
+                                status="loop_detected",
+                                message="檢測到重複操作模式，正在生成總結...",
+                                step=steps_taken
+                            ).to_dict())
+                        break
                 
                 # 發送步驟開始事件
                 if on_step:
                     await on_step(StreamEvent(
                         status="thinking",
                         message=f"第 {steps_taken} 步推理中...",
-                        step=steps_taken
+                        step=steps_taken,
+                        details={
+                            "elapsed_time": round(current_time - start_time, 2),
+                            "consecutive_failures": consecutive_failures
+                        }
                     ).to_dict())
                 
                 # 更新使用統計
@@ -496,9 +564,55 @@ class AgentService:
                                 tool_result=tool_result["content"][:500],
                                 step=steps_taken
                             ).to_dict())
+                        
+                        # === 檢查 Ground Truth 驗證結果 ===
+                        # llm_service.handle_tool_call 已經自動驗證了所有工具結果
+                        if self.enable_ground_truth_validation and "validation" in tool_result:
+                            validation_result = tool_result["validation"]
+                            if not validation_result["is_valid"]:
+                                consecutive_failures += 1
+                                logger.warning(f"工具結果驗證失敗: {validation_result['reason']}")
+                                if on_step:
+                                    await on_step(StreamEvent(
+                                        status="validation_failed",
+                                        message=f"工具結果驗證: {validation_result['reason']}",
+                                tool_name=tool_result["name"],
+                                        step=steps_taken
+                                    ).to_dict())
+                            else:
+                                consecutive_failures = 0  # 重置連續失敗計數
+                        
+                        # 記錄工具結果用於循環檢測
+                        tool_result_signature = f"{tool_result['name']}:{hash(tool_result['content'][:100])}"
+                        tool_result_history.append(tool_result_signature)
                     
-                    # 檢查是否需要反思（每 N 步或遇到複雜情況）
+                    # === 動態反思觸發 ===
+                    should_reflect = False
+                    reflection_reason = ""
+                    
+                    # 觸發條件 1: 固定步數反思
                     if enable_reflection and steps_taken % self.reflection_threshold == 0:
+                        should_reflect = True
+                        reflection_reason = f"已完成 {steps_taken} 步"
+                    
+                    # 觸發條件 2: 工具執行時間過長
+                    if self.enable_dynamic_reflection and tool_duration > getattr(settings, 'AGENT_TOOL_TIMEOUT_THRESHOLD', 10000):
+                        should_reflect = True
+                        reflection_reason = f"工具執行時間過長 ({tool_duration}ms)"
+                    
+                    # 觸發條件 3: 連續失敗後
+                    if self.enable_dynamic_reflection and consecutive_failures > 0:
+                        should_reflect = True
+                        reflection_reason = f"遇到失敗，需要調整策略"
+                    
+                    # 執行反思
+                    if should_reflect:
+                        if on_step:
+                            await on_step(StreamEvent(
+                                status="reflecting_trigger",
+                                message=f"觸發反思: {reflection_reason}",
+                                step=steps_taken
+                            ).to_dict())
                         await self._perform_reflection(
                             messages, model_name, steps_taken,
                             execution_trace, reasoning_steps, on_step
@@ -509,7 +623,53 @@ class AgentService:
                 
                 else:
                     # 沒有工具調用，LLM 認為任務完成或直接回答
+                    
+                    # === 任務完成自評估 ===
+                    if self.enable_self_evaluation and content:
+                        if on_step:
+                            await on_step(StreamEvent(
+                                status="assessing",
+                                message="正在評估任務完成度...",
+                                step=steps_taken
+                            ).to_dict())
+                        
+                        assessment = await assess_task_completion(
+                            prompt, content, tools_used, 
+                            llm_service.send_llm_request, model_name
+                        )
+                        
+                        task_completion_confidence = assessment.get("confidence", 0.7)
+                        
+                        # 如果評估結果顯示任務未完成且信心度低，考慮繼續執行
+                        if not assessment.get("is_complete", True) and task_completion_confidence < 0.6:
+                            missing = assessment.get("missing_elements", [])
+                            recommendation = assessment.get("recommendation", "complete")
+                            
+                            if recommendation == "continue" and steps_taken < max_steps_limit - 1:
+                                if on_step:
+                                    await on_step(StreamEvent(
+                                        status="incomplete",
+                                        message=f"任務評估: 完成度 {task_completion_confidence:.0%}，缺少: {', '.join(missing[:3])}",
+                                        details={"confidence": task_completion_confidence, "missing": missing},
+                                        step=steps_taken
+                                    ).to_dict())
+                                
+                                # 添加補充提示讓 LLM 繼續完善
+                                messages.append({
+                                    "role": "user",
+                                    "content": f"The task seems incomplete. Missing elements: {', '.join(missing[:3])}. Please continue to address these aspects."
+                                })
+                                continue  # 繼續下一輪
+                        
+                        execution_trace.append({
+                            "timestamp": datetime.now().isoformat(),
+                            "state": AgentState.RESPONDING.value,
+                            "action": "任務完成評估",
+                            "assessment": assessment
+                        })
+                    
                     final_response = response
+                    stop_reason = "task_complete"
                     
                     # 將最終回覆添加到消息歷史
                     messages.append({
@@ -520,14 +680,16 @@ class AgentService:
                     execution_trace.append({
                         "timestamp": datetime.now().isoformat(),
                         "state": AgentState.RESPONDING.value,
-                        "action": "生成最終響應"
+                        "action": "生成最終響應",
+                        "completion_confidence": task_completion_confidence
                     })
                     
                     if on_step:
                         await on_step(StreamEvent(
                             status="responding",
                             message="正在生成最終回覆...",
-                            step=steps_taken
+                            step=steps_taken,
+                            details={"completion_confidence": task_completion_confidence}
                         ).to_dict())
                     
                     break
@@ -572,6 +734,18 @@ class AgentService:
             # 計算執行時間
             execution_time = time.time() - start_time
             
+            # === 完整的執行診斷信息 ===
+            execution_summary = {
+                "stop_reason": stop_reason or ("max_steps" if steps_taken >= max_steps_limit else "complete"),
+                "total_steps": steps_taken,
+                "execution_time_seconds": round(execution_time, 2),
+                "tools_called": len(tools_used),
+                "consecutive_failures_final": consecutive_failures,
+                "completion_confidence": task_completion_confidence,
+                "loop_detected": stop_reason == "loop_detected",
+                "timeout": stop_reason == "execution_timeout"
+            }
+            
             # 發送完成事件 - 包含完整的響應數據
             if on_step:
                 await on_step({
@@ -586,11 +760,13 @@ class AgentService:
                     "execution_time": execution_time,
                     "steps_taken": steps_taken,
                     "success": True,
-                    "generated_image": llm_service.last_generated_image
+                    "generated_image": llm_service.last_generated_image,
+                    "execution_summary": execution_summary
                 })
             
-            # 更新用戶記憶（後台）
-            if enable_memory:
+            # 更新用戶記憶（後台）- 根據配置決定是否自動保存
+            auto_save_memory = getattr(settings, 'AGENT_AUTO_SAVE_MEMORY', True)
+            if enable_memory and auto_save_memory:
                 asyncio.create_task(background_memory_update(user_id, prompt))
                 logger.info(f"記憶更新任務已在後台啟動，用戶ID: {user_id}")
             
@@ -606,7 +782,8 @@ class AgentService:
                 "tools_used": tools_used,
                 "execution_time": execution_time,
                 "steps_taken": steps_taken,
-                "generated_image": llm_service.last_generated_image
+                "generated_image": llm_service.last_generated_image,
+                "execution_summary": execution_summary
             }
             
         except Exception as e:

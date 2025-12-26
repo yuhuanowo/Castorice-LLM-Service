@@ -91,7 +91,12 @@ class MCPServer:
     env: Dict[str, str]
     transport: MCPTransportType = MCPTransportType.STDIO
     enabled: bool = True
-    timeout: int = 30
+    timeout: int = None  # 使用 None 表示將從配置獲取
+    
+    def __post_init__(self):
+        # 從配置獲取超時時間
+        if self.timeout is None:
+            self.timeout = getattr(settings, 'MCP_SERVER_TIMEOUT', 30)
 
 
 @dataclass

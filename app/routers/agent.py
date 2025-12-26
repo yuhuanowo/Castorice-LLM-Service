@@ -69,8 +69,8 @@ class UnifiedAgentRequest(BaseModel):
 
 async def validate_request(body: dict, settings: Settings) -> None:
     """驗證請求參數"""
-    model_name = body.get("model_name", "gpt-4o-mini")
-    enable_mcp = body.get("enable_mcp", True)
+    model_name = body.get("model_name", settings.AGENT_DEFAULT_MODEL)
+    enable_mcp = body.get("enable_mcp", settings.AGENT_ENABLE_MCP)
     
     # 驗證模型
     all_models = (
@@ -198,7 +198,7 @@ async def agent_stream(
     # 提取請求參數
     user_id = body.get("user_id", "test")
     prompt = body.get("prompt", "")
-    model_name = body.get("model_name", "gpt-4o-mini")
+    model_name = body.get("model_name", settings.AGENT_DEFAULT_MODEL)
     session_id = body.get("session_id")
     
     logger.info(f"收到Agent流式請求，用戶: {user_id}, 模型: {model_name}, "

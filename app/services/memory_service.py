@@ -19,7 +19,8 @@ settings = get_settings()
 class MemoryService:
     """記憶服務類"""
     def __init__(self):
-        self.memory_model = "gemma-3-27b-it"  # 用於記憶處理的模型
+        self.memory_model = getattr(settings, 'MEMORY_SERVICE_MODEL', "gemma-3-27b-it")  # 用於記憶處理的模型
+        self.max_memory_chars = getattr(settings, 'AGENT_LONG_TERM_MEMORY_MAX_CHARS', 8000)  # 最大記憶字符數
         
     async def update_memory(self, user_id: str, prompt: str) -> str:
         """
@@ -37,7 +38,8 @@ class MemoryService:
             logger.info(f"開始記憶更新過程，使用者ID: {user_id}")
             
             # 獲取最近對話記錄
-            recent_logs = get_chat_logs(user_id, 5)
+            max_messages = getattr(settings, 'AGENT_SHORT_TERM_MEMORY_MAX_MESSAGES', 5)
+            recent_logs = get_chat_logs(user_id, max_messages)
             conversations = []
             
             for log in recent_logs:
@@ -98,6 +100,11 @@ class MemoryService:
                 
                 # 提取生成的記憶
                 memory_update = result["choices"][0]["message"]["content"]
+                
+                # 記憶長度限制 - 使用配置的最大字符數
+                if len(memory_update) > self.max_memory_chars:
+                    logger.warning(f"記憶內容超過限制 ({len(memory_update)} > {self.max_memory_chars})，進行截斷")
+                    memory_update = memory_update[:self.max_memory_chars]
                 
                 # 记录返回的内容长度和部分内容
                 logger.info(f"记憶更新內容長度: {len(memory_update)} 字符")

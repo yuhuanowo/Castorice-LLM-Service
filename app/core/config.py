@@ -88,7 +88,7 @@ class PromptTemplates:
     # Agent模式系统提示词
     class AgentSystem:
         """Agent各种模式的系统提示词"""
-          # ReAct模式系统提示词
+        # ReAct模式系统提示词
         REACT = """You are an advanced autonomous agent operating on the ReAct (Reasoning, Acting, Observing) architecture. Your mission is to solve complex tasks through systematic thought and action cycles.
 
             ## Core ReAct Process
@@ -170,7 +170,7 @@ class PromptTemplates:
             Your internal reasoning should guide your response but NOT appear in it. The user should receive a clean, professional answer.
 
             Remember: Transparency in your reasoning process is crucial when using tools. But for final answers, focus on delivering clear, actionable results. Use Markdown formatting to make your responses well-organized."""
-            # MCP模式系统提示词
+        # MCP模式系统提示词
         MCP = """You are an intelligent agent with Model Context Protocol (MCP) capabilities, designed to efficiently integrate with external tools and data sources while maintaining high standards of accuracy and efficiency.
 
             ## Core Capabilities
@@ -254,61 +254,6 @@ class PromptTemplates:
             4. **Seek** user guidance when needed
 
             Your goal is to be a reliable, efficient, and intelligent partner in accomplishing user objectives through the effective use of MCP-enabled tools and resources."""        
-            # 简单模式系统提示词
-        SIMPLE = """You are an intelligent assistant designed to provide clear, helpful responses while efficiently using available tools when needed.
-
-            ## Core Objectives
-            - Understand user needs accurately and completely
-            - Provide clear, actionable responses
-            - Use tools judiciously to enhance your capabilities
-            - Maintain efficiency while ensuring quality
-
-            ## Markdown Response Formatting
-            Always format your responses using Markdown for clarity:
-            - Use `# ## ###` for clear section headings
-            - Use `**bold**` and `*italic*` for emphasis
-            - Use `code` for technical terms, commands, or variables
-            - Use ```code blocks``` for multi-line code or detailed examples
-            - Use `- 1.` for structured lists and steps
-            - Use `>` for important notes, warnings, or key insights
-            - Use `| tables |` when presenting structured data
-            - Use blank lines to separate logical sections
-
-            ## Response Approach
-            1. **Listen Carefully**: Parse user requests for both explicit and implicit needs
-            2. **Think Clearly**: Consider the best way to address the request
-            3. **Act Purposefully**: Use tools only when they add genuine value
-            4. **Communicate Effectively**: Provide clear, well-structured responses
-
-            ## Smart Tool Usage
-
-            ### Search Operations
-            When using `searchDuckDuckGo`:
-            - **First**: Review search result summaries to understand the information landscape
-            - **Then**: Selectively use `fetchWebpageContent` on only the most relevant 1-2 URLs
-            - **Avoid**: Fetching content from every search result unnecessarily
-            - **Result**: More efficient processing with better focus on relevant information
-
-            ### General Tool Guidelines
-            - Choose the right tool for each specific task
-            - Validate inputs before tool execution
-            - Handle errors gracefully and try alternatives when needed
-            - Explain your tool usage decisions when helpful
-
-            ## Communication Style
-            - Use clear, concise language with proper Markdown formatting
-            - Structure complex information with headings and lists
-            - Provide examples when they clarify concepts
-            - Ask follow-up questions when user intent is unclear
-
-            ## Quality Standards
-            - Accuracy over speed
-            - Clarity over complexity
-            - Helpfulness over showing off capabilities
-            - User satisfaction as the primary goal
-
-            Remember: Your role is to be genuinely helpful while using resources efficiently. Focus on solving user problems rather than demonstrating technical capabilities. Always use Markdown formatting to make your responses clear and well-organized."""
-
         # ReAct+MCP组合模式系统提示词
         REACT_MCP_COMBINED = """You are an advanced autonomous agent that combines the systematic approach of ReAct (Reasoning, Acting, Observing) methodology with the rich tool ecosystem of Model Context Protocol (MCP). This powerful combination enables you to tackle complex, multi-faceted tasks with both strategic thinking and comprehensive tool access.
 
@@ -942,11 +887,35 @@ class Settings(BaseSettings):
     AGENT_ENABLE_MCP: bool = True  # 是否默认启用MCP
     AGENT_DEFAULT_MODEL: str = "gpt-4o-mini"  # 默认Agent使用的模型
     AGENT_SHORT_TERM_MEMORY_MAX_MESSAGES: int = 5  # 短期记忆最大消息数量
-    AGENT_LONG_TERM_MEMORY_MAX_TOKENS: int = 4096  # 长期记忆最大token数
+    AGENT_LONG_TERM_MEMORY_MAX_CHARS: int = 8000  # 长期记忆最大字符数
     AGENT_DEFAULT_ADVANCED_TOOLS: bool = True  # 是否默认启用高级工具
-    AGENT_ENABLE_SELF_EVALUATION: bool = True  # 是否启用自我评估
+    AGENT_ENABLE_SELF_EVALUATION: bool = True  # 是否启用自我评估（包含任務完成度評估）
     AGENT_AUTO_SAVE_MEMORY: bool = True  # 是否自动保存记忆
-    AGENT_REACT_MODE_ENABLED: bool = True  # 是否默认启用ReAct模式
+    AGENT_MAX_EXECUTION_TIME: int = 300  # 最大執行時間（秒），防止無限執行
+    AGENT_MAX_CONSECUTIVE_FAILURES: int = 3  # 連續失敗上限，超過則停止
+    AGENT_ENABLE_GROUND_TRUTH: bool = True  # 啟用 Ground Truth 驗證
+    AGENT_ENABLE_DYNAMIC_REFLECTION: bool = True  # 啟用動態反思觸發
+    AGENT_LOOP_DETECTION_WINDOW: int = 3  # 循環檢測窗口大小
+    AGENT_TOOL_TIMEOUT_THRESHOLD: int = 10000  # 工具執行超時閾值（毫秒），超過觸發反思
+    AGENT_MAX_LLM_RETRIES: int = 3  # LLM請求最大重試次數
+    
+    # HTTP 超時配置
+    LLM_REQUEST_TIMEOUT: float = 600.0  # LLM 請求超時（秒）
+    OLLAMA_REQUEST_TIMEOUT: float = 6000.0  # Ollama 請求超時（秒）
+    WEBPAGE_FETCH_TIMEOUT: float = 10.0  # 網頁抓取超時（秒）
+    MCP_SERVER_TIMEOUT: int = 30  # MCP 服務器連接超時（秒）
+    
+    # 內容長度配置
+    MAX_WEBPAGE_CONTENT_LENGTH: int = 5000  # 網頁內容最大長度（字符）
+    MIN_CONTENT_FOR_SUMMARIZATION: int = 1000  # 觸發摘要的最小內容長度
+    MAX_SUMMARIZE_INPUT_LENGTH: int = 20000  # 摘要輸入最大長度
+    MAX_TRANSLATE_INPUT_LENGTH: int = 10000  # 翻譯輸入最大長度
+    SEARCH_DEFAULT_NUM_RESULTS: int = 10  # 搜索默認結果數量
+    SESSION_HISTORY_LIMIT: int = 10  # 會話歷史記錄限制
+    
+    # 服務模型配置
+    MEMORY_SERVICE_MODEL: str = "gemma-3-27b-it"  # 記憶服務使用的模型
+    SUMMARIZATION_MODEL: str = "gemma-3n-e4b-it"  # 摘要服務使用的模型
     
     # Prompts配置 - 使用PromptTemplates类中的内容
     # 系统提示词
@@ -955,7 +924,6 @@ class Settings(BaseSettings):
     # Agent系统提示词
     PROMPT_REACT_SYSTEM: str = PromptTemplates.AgentSystem.REACT
     PROMPT_MCP_SYSTEM: str = PromptTemplates.AgentSystem.MCP
-    PROMPT_SIMPLE_SYSTEM: str = PromptTemplates.AgentSystem.SIMPLE
     PROMPT_REACT_MCP_COMBINED: str = PromptTemplates.AgentSystem.REACT_MCP_COMBINED
     
     # 规划、反思等提示词

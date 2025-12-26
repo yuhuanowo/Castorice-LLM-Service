@@ -708,7 +708,7 @@ class LLMService:
         prompt: str, 
         image: Optional[str] = None, 
         audio: Optional[str] = None, 
-        model_name: str = "gpt-4o-mini"
+        model_name: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         格式化用户消息 - 将用户输入转换为模型可接受的格式，处理多模态输入
@@ -722,6 +722,10 @@ class LLMService:
         Returns:
             格式化后的消息列表
         """
+        # 使用配置的預設模型
+        if model_name is None:
+            model_name = settings.AGENT_DEFAULT_MODEL
+        
         # 默认文本消息
         user_message = [{"role": "user", "content": prompt}]
         
@@ -863,7 +867,7 @@ class LLMService:
                     url,
                     headers=headers,
                     json=body,
-                    timeout=600.0  # 增加超时时间，确保大型输入有足够处理时间
+                    timeout=settings.LLM_REQUEST_TIMEOUT  # 使用配置的超時時間
                 )
                 
                   # 处理错误响应
@@ -1125,10 +1129,10 @@ class LLMService:
             try:
                 response = await asyncio.wait_for(
                     loop.run_in_executor(None, get_response),
-                    timeout=600.0  # 600秒超时
+                    timeout=settings.LLM_REQUEST_TIMEOUT  # 使用配置的超時時間
                 )
             except asyncio.TimeoutError:
-                logger.error("Gemini请求超时（600秒）")
+                logger.error(f"Gemini请求超时（{settings.LLM_REQUEST_TIMEOUT}秒）")
                 return "Gemini请求超时，请稍后重试"
             
             # 检查是否存在函数调用，如果有就直接返回完整响应对象
@@ -1220,7 +1224,7 @@ class LLMService:
                     url,
                     headers=headers,
                     json=body,
-                    timeout=6000.0  # 增加超时时间，本地模型可能需要更长时间
+                    timeout=settings.OLLAMA_REQUEST_TIMEOUT  # 使用配置的超時時間（本地模型可能需要更長時間）
                 )
                 
                 # 处理错误响应
@@ -1331,7 +1335,7 @@ class LLMService:
                     url,
                     headers=headers,
                     json=body,
-                    timeout=600.0  # NVIDIA NIM的超时时间
+                    timeout=settings.LLM_REQUEST_TIMEOUT  # 使用配置的超時時間
                 )
                 
                 # 处理错误响应
@@ -1401,7 +1405,7 @@ class LLMService:
                     url,
                     headers=headers,
                     json=body,
-                    timeout=600.0  # 增加超时时间，与其他API保持一致
+                    timeout=settings.LLM_REQUEST_TIMEOUT  # 使用配置的超時時間
                 )
                 
                 # 处理错误响应
@@ -1502,7 +1506,8 @@ class LLMService:
             retrieve_from_memory,
             create_date_plan,
             integrate_information,
-            generate_code
+            generate_code,
+            validate_tool_result  # Anthropic 最佳實踐：Ground Truth 驗證
         )
         # 注意：不再导入MCP工具，MCP工具应该由MCP客户端动态处理
         
@@ -1905,6 +1910,20 @@ class LLMService:
                     "name": name,
                     "content": json.dumps({"error": f"工具执行错误: {str(e)}"})
                 })
+        
+        # === Anthropic 最佳實踐：Ground Truth 驗證 ===
+        # 統一驗證所有工具結果
+        for tool_result in tool_results:
+            validation = validate_tool_result(tool_result)
+            # 將驗證結果添加到工具結果中
+            tool_result["validation"] = validation
+            
+            # 如果驗證失敗，記錄警告
+            if not validation["is_valid"]:
+                logger.warning(
+                    f"工具 {tool_result.get('name')} 驗證失敗: "
+                    f"{validation['reason']} (嚴重程度: {validation['severity']})"
+                )
                 
         return tool_results
 

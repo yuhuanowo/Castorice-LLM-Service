@@ -21,6 +21,181 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
+# ---------- Agent 增強工具  ----------
+
+# MARK: Ground Truth 驗證
+def validate_tool_result(tool_result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ground Truth 驗證 - 驗證工具執行結果的有效性
+    
+    基於 Anthropic 最佳實踐：每一步執行後驗證「ground truth」
+    確保工具結果是有效的、可用的
+    
+    Args:
+        tool_result: 工具執行結果，包含 name, content 等字段
+        
+    Returns:
+        驗證結果 {"is_valid": bool, "reason": str, "severity": str}
+    """
+    content = tool_result.get("content", "")
+    tool_name = tool_result.get("name", "")
+    
+    # 檢查 1: 結果是否為空
+    if not content or (isinstance(content, str) and content.strip() == ""):
+        return {
+            "is_valid": False,
+            "reason": "工具返回空結果",
+            "severity": "high"
+        }
+    
+    # 檢查 2: 是否包含錯誤標記
+    try:
+        content_lower = content.lower() if isinstance(content, str) else str(content).lower()
+        # 嘗試解析 JSON 錯誤
+        if isinstance(content, str) and content.startswith("{"):
+            parsed = json.loads(content)
+            if isinstance(parsed, dict) and "error" in parsed:
+                return {
+                    "is_valid": False,
+                    "reason": f"工具返回錯誤: {parsed.get('error', 'unknown')}",
+                    "severity": "high"
+                }
+    except (json.JSONDecodeError, TypeError):
+        pass
+    
+    # 檢查 3: 搜索工具特殊驗證
+    if tool_name in ["searchDuckDuckGo", "search"]:
+        try:
+            parsed = json.loads(content) if isinstance(content, str) else content
+            results = parsed.get("results", [])
+            if not results or len(results) == 0:
+                return {
+                    "is_valid": True,  # 空搜索結果仍然有效
+                    "reason": "搜索無結果，可能需要調整搜索詞",
+                    "severity": "low"
+                }
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
+    
+    # 檢查 4: 網頁抓取工具驗證
+    if tool_name == "fetchWebpageContent":
+        if isinstance(content, str) and len(content) < 100:
+            return {
+                "is_valid": True,
+                "reason": "網頁內容較少，可能需要嘗試其他來源",
+                "severity": "low"
+            }
+    
+    # 檢查 5: 圖片生成工具驗證
+    if tool_name == "generateImage":
+        try:
+            parsed = json.loads(content) if isinstance(content, str) else content
+            if isinstance(parsed, dict):
+                if parsed.get("error"):
+                    return {
+                        "is_valid": False,
+                        "reason": f"圖片生成失敗: {parsed.get('error')}",
+                        "severity": "medium"
+                    }
+                if not parsed.get("success"):
+                    return {
+                        "is_valid": False,
+                        "reason": "圖片生成未成功",
+                        "severity": "medium"
+                    }
+        except (json.JSONDecodeError, TypeError):
+            pass
+    
+    return {
+        "is_valid": True,
+        "reason": "驗證通過",
+        "severity": "none"
+    }
+
+
+# MARK: 任務完成評估
+async def assess_task_completion(
+    original_prompt: str,
+    current_response: str,
+    tools_used: List[Dict[str, Any]],
+    llm_request_func,  # 傳入 LLM 請求函數
+    model_name: str
+) -> Dict[str, Any]:
+    """
+    任務完成自評估 - 讓 LLM 評估任務完成程度
+    
+    基於 Anthropic 最佳實踐：Agent 應該能夠自主評估任務是否完成
+    
+    Args:
+        original_prompt: 原始用戶請求
+        current_response: 當前回覆內容
+        tools_used: 已使用的工具列表
+        llm_request_func: LLM 請求函數（通常是 llm_service.send_llm_request）
+        model_name: 模型名稱
+        
+    Returns:
+        評估結果 {"is_complete": bool, "confidence": float, "missing_elements": list, "recommendation": str}
+    """
+    assessment_prompt = f"""Based on the original user request and the current response, assess task completion:
+
+        **Original Request**: {original_prompt[:500]}
+
+        **Current Response Preview**: {current_response[:500]}
+
+        **Tools Used**: {', '.join([t['name'] for t in tools_used]) if tools_used else 'None'}
+
+        Please evaluate:
+        1. Does the response fully address the user's request?
+        2. Are there any missing elements or incomplete aspects?
+        3. What is your confidence level (0.0-1.0) that the task is complete?
+
+        Respond in JSON format:
+        {{"is_complete": true/false, "confidence": 0.0-1.0, "missing_elements": ["element1", "element2"], "recommendation": "continue/complete/clarify"}}"""
+        
+    try:
+        assessment_messages = [
+            {"role": "system", "content": "You are a task completion assessor. Evaluate whether a task has been fully completed."},
+            {"role": "user", "content": assessment_prompt}
+        ]
+        
+        response = await llm_request_func(assessment_messages, model_name, None)
+        
+        if "choices" in response and response["choices"]:
+            content = response["choices"][0].get("message", {}).get("content", "{}")
+            try:
+                # 嘗試提取 JSON
+                json_match = re.search(r'\{[^{}]*\}', content, re.DOTALL)
+                if json_match:
+                    assessment = json.loads(json_match.group())
+                    # 確保必要字段存在
+                    if "is_complete" not in assessment:
+                        assessment["is_complete"] = True
+                    if "confidence" not in assessment:
+                        assessment["confidence"] = 0.7
+                    if "missing_elements" not in assessment:
+                        assessment["missing_elements"] = []
+                    if "recommendation" not in assessment:
+                        assessment["recommendation"] = "complete"
+                    return assessment
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        
+        return {
+            "is_complete": True,
+            "confidence": 0.7,
+            "missing_elements": [],
+            "recommendation": "complete"
+        }
+        
+    except Exception as e:
+        logger.warning(f"任務完成評估失敗: {e}")
+        return {
+            "is_complete": True,
+            "confidence": 0.5,
+            "missing_elements": [],
+            "recommendation": "complete"
+        }
+
 # ---------- 基础工具 ----------
 
 # MARK: 生成图像
@@ -198,7 +373,7 @@ async def fetch_webpage_content(url: str) -> Optional[str]:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             }
-            response = await client.get(url, headers=headers, timeout=10.0, follow_redirects=True)
+            response = await client.get(url, headers=headers, timeout=settings.WEBPAGE_FETCH_TIMEOUT, follow_redirects=True)
             
             if response.status_code != 200:
                 logger.error(f"获取网页失败，状态码: {response.status_code}")
@@ -222,7 +397,7 @@ async def fetch_webpage_content(url: str) -> Optional[str]:
             logger.info(f"成功获取网页内容，长度: {len(text)}")
             
             # 根据内容长度进行截断
-            max_length = 5000  # 设置合理的截断长度
+            max_length = settings.MAX_WEBPAGE_CONTENT_LENGTH  # 使用配置的最大長度
             if len(text) > max_length:
                 text = text[:max_length] + "...[内容已截断]"
             
@@ -231,8 +406,8 @@ async def fetch_webpage_content(url: str) -> Optional[str]:
                 from app.services.llm_service import llm_service
                 
                 # 根据内容长度决定是否需要提取重点
-                if len(text) > 1000:  # 对于较长的内容才进行处理
-                    logger.info(f"使用Gemma-3模型提取网页内容重点")
+                if len(text) > settings.MIN_CONTENT_FOR_SUMMARIZATION:  # 對於較長的內容才進行處理
+                    logger.info(f"使用{settings.SUMMARIZATION_MODEL}模型提取网页内容重点")
                     
                     messages = [
                         {
@@ -245,8 +420,8 @@ async def fetch_webpage_content(url: str) -> Optional[str]:
                         }
                     ]
                     
-                    # 使用较小的模型进行处理
-                    model_name = "gemma-3n-e4b-it"
+                    # 使用配置的摘要模型
+                    model_name = settings.SUMMARIZATION_MODEL
                     summary_response = await llm_service.send_llm_request(messages, model_name)
                     
                     if "choices" in summary_response and summary_response["choices"]:
@@ -297,8 +472,8 @@ async def analyze_text(text: str, task: str) -> Dict[str, Any]:
             }
         ]
         
-        # 使用小模型完成分析任务
-        analysis_model = "gemma-3n-e4b-it"  # 使用小模型进行分析
+        # 使用配置的摘要模型完成分析任务
+        analysis_model = settings.SUMMARIZATION_MODEL
         
         analysis_response = await llm_service.send_llm_request(messages, analysis_model)
         
@@ -368,7 +543,7 @@ async def format_content(content: str, output_format: str) -> Dict[str, Any]:
                     }
                 ]
                 
-                format_response = await llm_service.send_llm_request(messages, "gemma-3n-e4b-it", skip_content_check=True)
+                format_response = await llm_service.send_llm_request(messages, settings.SUMMARIZATION_MODEL, skip_content_check=True)
                 
                 if "choices" in format_response and format_response["choices"]:
                     format_text = format_response["choices"][0]["message"].get("content", "")
@@ -441,7 +616,7 @@ async def format_content(content: str, output_format: str) -> Dict[str, Any]:
                 }
             ]
             
-            format_response = await llm_service.send_llm_request(messages, "gemma-3n-e4b-it", skip_content_check=True)
+            format_response = await llm_service.send_llm_request(messages, settings.SUMMARIZATION_MODEL, skip_content_check=True)
             
             if "choices" in format_response and format_response["choices"]:
                 format_text = format_response["choices"][0]["message"].get("content", "")
@@ -598,8 +773,8 @@ async def generate_structured_data(
             }
         ]
         
-        # 使用小模型生成数据
-        model_name = "gemma-3n-e4b-it"
+        # 使用配置的摘要模型生成数据
+        model_name = settings.SUMMARIZATION_MODEL
         response = await llm_service.send_llm_request(messages, model_name)
         
         if "choices" in response and response["choices"]:
@@ -661,8 +836,8 @@ async def summarize_content(text: str, max_length: int = 500) -> Dict[str, Any]:
         from app.services.llm_service import llm_service
         
         # 截断过长的输入
-        if len(text) > 20000:
-            text = text[:20000] + "...[内容已截断]"
+        if len(text) > settings.MAX_SUMMARIZE_INPUT_LENGTH:
+            text = text[:settings.MAX_SUMMARIZE_INPUT_LENGTH] + "...[内容已截断]"
         
         messages = [
             {
@@ -675,8 +850,8 @@ async def summarize_content(text: str, max_length: int = 500) -> Dict[str, Any]:
             }
         ]
         
-        # 使用小模型生成摘要
-        model_name = "gemma-3n-e4b-it"
+        # 使用配置的摘要模型
+        model_name = settings.SUMMARIZATION_MODEL
         response = await llm_service.send_llm_request(messages, model_name)
         
         if "choices" in response and response["choices"]:
@@ -718,8 +893,8 @@ async def translate_text(text: str, target_language: str) -> Dict[str, Any]:
         from app.services.llm_service import llm_service
         
         # 截断过长的输入
-        if len(text) > 10000:
-            text = text[:10000] + "...[内容已截断]"
+        if len(text) > settings.MAX_TRANSLATE_INPUT_LENGTH:
+            text = text[:settings.MAX_TRANSLATE_INPUT_LENGTH] + "...[内容已截断]"
         
         messages = [
             {
@@ -732,8 +907,8 @@ async def translate_text(text: str, target_language: str) -> Dict[str, Any]:
             }
         ]
         
-        # 使用小模型进行翻译
-        model_name = "gemma-3n-e4b-it"
+        # 使用配置的摘要模型进行翻译
+        model_name = settings.SUMMARIZATION_MODEL
         response = await llm_service.send_llm_request(messages, model_name)
         
         if "choices" in response and response["choices"]:
@@ -789,8 +964,8 @@ async def answer_from_data(question: str, data: List[Dict[str, Any]]) -> Dict[st
             }
         ]
         
-        # 使用模型生成回答
-        model_name = "gemma-3n-e4b-it"
+        # 使用配置的模型生成回答
+        model_name = settings.SUMMARIZATION_MODEL
         response = await llm_service.send_llm_request(messages, model_name)
         
         if "choices" in response and response["choices"]:
@@ -967,8 +1142,8 @@ async def create_date_plan(
             }
         ]
         
-        # 使用模型生成计划
-        model_name = "gemma-3n-e4b-it"
+        # 使用配置的模型生成计划
+        model_name = settings.SUMMARIZATION_MODEL
         response = await llm_service.send_llm_request(messages, model_name)
         
         if "choices" in response and response["choices"]:
@@ -1055,8 +1230,8 @@ async def integrate_information(
             }
         ]
         
-        # 使用模型整合信息
-        model_name = "gemma-3n-e4b-it"  # 使用更强大的模型以获得更好的整合效果
+        # 使用配置的模型整合信息
+        model_name = settings.SUMMARIZATION_MODEL
         response = await llm_service.send_llm_request(messages, model_name)
         
         if "choices" in response and response["choices"]:
@@ -1117,8 +1292,8 @@ async def generate_code(
             }
         ]
         
-        # 使用模型生成代码
-        model_name = "gemma-3n-e4b-it"  # 使用更强大的模型以获得更好的代码质量
+        # 使用配置的模型生成代码
+        model_name = settings.SUMMARIZATION_MODEL
         response = await llm_service.send_llm_request(messages, model_name)
         
         if "choices" in response and response["choices"]:
@@ -1193,7 +1368,7 @@ async def ensure_content_length(
                 "content": input_text
             }
         ]
-        model_name = "gemma-3n-e4b-it"
+        model_name = settings.SUMMARIZATION_MODEL
         response = await llm_service.send_llm_request(messages, model_name, skip_content_check=True)
         if response.get("choices"):
             summary = response["choices"][0]["message"].get("content", "")
