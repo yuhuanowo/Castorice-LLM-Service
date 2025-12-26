@@ -2545,6 +2545,22 @@ export default function ModernChatGPT() {
     }
   ): Promise<void> => {
     const controller = requestManager.startRequest()
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+    let hasReceivedData = false
+    let lastActivityTime = Date.now()
+    const INACTIVITY_TIMEOUT = 30000 // 30秒無數據則超時
+    
+    // 設置不活躍超時檢測
+    const inactivityTimer = setInterval(() => {
+      if (Date.now() - lastActivityTime > INACTIVITY_TIMEOUT) {
+        console.warn('⚠️ Stream inactivity timeout, closing connection')
+        clearInterval(inactivityTimer)
+        reader?.cancel('Inactivity timeout')
+        if (!hasReceivedData) {
+          callbacks.onError(new Error('連接超時：服務器無響應'))
+        }
+      }
+    }, 5000) // 每5秒檢查一次
     
     try {
       console.log('🚀 Starting Agent SSE stream request')
@@ -2558,7 +2574,9 @@ export default function ModernChatGPT() {
           'Accept': 'text/event-stream',
         },
         body: JSON.stringify(body),
-        signal: controller.signal
+        signal: controller.signal,
+        // 添加 keepalive 以保持連接
+        keepalive: true
       })
 
       if (!response.ok) {
@@ -2570,18 +2588,71 @@ export default function ModernChatGPT() {
         throw new Error('回應體為空')
       }
 
-      const reader = response.body.getReader()
+      reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
+      let hasProcessedFinal = false
 
       while (true) {
-        const { done, value } = await reader.read()
+        let readResult
+        try {
+          readResult = await reader.read()
+        } catch (readError: any) {
+          // 處理讀取錯誤（如連接被提前關閉）
+          if (readError.message?.includes('peer closed connection') || 
+              readError.message?.includes('incomplete chunked read')) {
+            console.warn('⚠️ Connection closed by server:', readError.message)
+            // 如果已經收到了數據且沒有處理最終結果，嘗試處理緩衝區中的剩餘數據
+            if (buffer && hasReceivedData && !hasProcessedFinal) {
+              console.log('🔄 Processing remaining buffer data before exit')
+              const lines = buffer.split('\n')
+              for (const line of lines) {
+                if (line.trim() && line.startsWith('data: ')) {
+                  try {
+                    const data = JSON.parse(line.slice(6))
+                    if (data.is_final) {
+                      callbacks.onFinal(data)
+                      hasProcessedFinal = true
+                    }
+                  } catch (parseError) {
+                    console.warn('⚠️ Failed to parse remaining buffer:', parseError)
+                  }
+                }
+              }
+            }
+            break // 正常退出循環，不拋出錯誤
+          }
+          throw readError // 其他錯誤繼續拋出
+        }
+        
+        const { done, value } = readResult
         
         if (done) {
-          console.log('✅ SSE stream ended')
+          console.log('✅ SSE stream ended normally')
+          // 檢查是否有未處理的緩衝區數據
+          if (buffer && !hasProcessedFinal) {
+            console.log('🔄 Processing final buffer data')
+            const lines = buffer.split('\n')
+            for (const line of lines) {
+              if (line.trim() && line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6))
+                  if (data.is_final) {
+                    callbacks.onFinal(data)
+                    hasProcessedFinal = true
+                  }
+                } catch (parseError) {
+                  console.warn('⚠️ Failed to parse final buffer:', parseError)
+                }
+              }
+            }
+          }
           break
         }
 
+        hasReceivedData = true
+        lastActivityTime = Date.now()
+        
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
         buffer = lines.pop() || ''
@@ -2593,28 +2664,53 @@ export default function ModernChatGPT() {
               console.log('📨 SSE Event:', data.status, data.message?.substring(0, 50))
 
               if (data.is_final) {
+                hasProcessedFinal = true
                 callbacks.onFinal(data)
               } else if (data.status === 'error') {
-                callbacks.onError(new Error(data.message))
+                callbacks.onError(new Error(data.message || '未知錯誤'))
               } else {
                 // 中間步驟 - 直接調用，Edge Runtime 會確保每個 chunk 立即發送
                 callbacks.onStep(data)
               }
             } catch (parseError) {
-              console.warn('⚠️ Failed to parse SSE:', parseError)
+              console.warn('⚠️ Failed to parse SSE line:', line.substring(0, 100), parseError)
             }
           }
         }
       }
+      
+      // 清理超時檢測器
+      clearInterval(inactivityTimer)
+      
     } catch (error: any) {
+      // 清理超時檢測器
+      clearInterval(inactivityTimer)
+      
       if (error.name === 'AbortError') {
         console.log('🛑 Agent stream request was cancelled')
         callbacks.onError(new Error('請求已取消'))
+      } else if (error.message?.includes('peer closed connection') || 
+                 error.message?.includes('incomplete chunked read')) {
+        // 友好處理連接關閉錯誤
+        console.warn('⚠️ Connection closed prematurely:', error.message)
+        if (!hasReceivedData) {
+          callbacks.onError(new Error('服務器連接意外關閉，請重試'))
+        }
+        // 如果已經收到數據，則不視為錯誤
       } else {
         console.error('❌ Agent stream request failed:', error)
         callbacks.onError(error)
       }
     } finally {
+      // 清理資源
+      clearInterval(inactivityTimer)
+      if (reader) {
+        try {
+          await reader.cancel()
+        } catch (cancelError) {
+          console.warn('⚠️ Error cancelling reader:', cancelError)
+        }
+      }
       requestManager.finishRequest()
     }
   }

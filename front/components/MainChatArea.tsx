@@ -1284,7 +1284,7 @@ export function MainChatArea({
                             <motion.div
                               animate={{ rotate: 360 }}
                               transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                              className="w-3 h-3 border-1.5 border-green-500 border-t-transparent rounded-full"
+                              className="w-3 h-3 border-2 border-green-500 border-t-transparent rounded-full"
                             />
                             <span>處理中</span>
                           </motion.div>
