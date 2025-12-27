@@ -6,15 +6,6 @@ import json
 import os
 import logging
 import asyncio
-from enum import Enum
-
-# 添加Gemini需要的依赖
-try:
-    from google import genai
-    from google.genai import types
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
 
 from app.utils.logger import logger
 from app.core.config import get_settings
@@ -22,70 +13,62 @@ from app.utils.tools import generate_image, search_duckduckgo
 from app.models.mongodb import update_usage, get_user_usage
 from app.models.sqlite import update_usage_sqlite
 
+# 導入 Provider 模組
+from app.services.providers import (
+    ModelProvider,
+    BaseProvider,
+    GitHubModelProvider,
+    GeminiProvider,
+    OllamaProvider,
+    NvidiaNimProvider,
+    OpenRouterProvider,
+)
+
 settings = get_settings()
-
-
-class ModelProvider(Enum):
-    """模型提供商枚举类"""
-    GITHUB = "github"
-    GEMINI = "gemini"
-    OLLAMA = "ollama"
-    NVIDIA_NIM = "nvidia_nim"
-    OPENROUTER = "openrouter"
 
 
 class LLMService:
     """
-    LLM服务类 - 负责处理与大型语言模型API的交互
-    包括：发送请求、处理响应、工具调用和使用量统计
+    LLM服務類 - 負責處理與大型語言模型API的交互
+    包括：發送請求、處理響應、工具調用和使用量統計
+    
+    此類作為統一的接口，整合各個 Provider 的調用
     """
     def __init__(self):
-        # GitHub API设置
-        self.github_endpoint = settings.GITHUB_ENDPOINT
-        self.github_api_key = settings.GITHUB_INFERENCE_KEY
-        self.github_api_version = settings.GITHUB_API_VERSION
-          # Gemini API设置
-        if GEMINI_AVAILABLE:
-            self.gemini_api_key = settings.GEMINI_API_KEY
-            self.gemini_default_model = settings.GEMINI_DEFAULT_MODEL
-            # 初始化Gemini客户端
-            if self.gemini_api_key:
-                self.gemini_client = genai.Client(api_key=self.gemini_api_key)
-            else:
-                self.gemini_client = None
-                logger.warning("Gemini API密钥未设置，无法使用Gemini模型")
-        else:
-            self.gemini_client = None
-            logger.warning("未安装google-genai库，无法使用Gemini模型")
+        # 初始化各個 Provider
+        self.providers: Dict[ModelProvider, BaseProvider] = {
+            ModelProvider.GITHUB: GitHubModelProvider(),
+            ModelProvider.GEMINI: GeminiProvider(),
+            ModelProvider.OLLAMA: OllamaProvider(),
+            ModelProvider.NVIDIA_NIM: NvidiaNimProvider(),
+            ModelProvider.OPENROUTER: OpenRouterProvider(),
+        }
         
-        # Ollama API设置
-        self.ollama_endpoint = settings.OLLAMA_ENDPOINT
-        self.ollama_api_key = settings.OLLAMA_API_KEY
-        self.ollama_default_model = settings.OLLAMA_DEFAULT_MODEL
-        
-        # NVIDIA NIM API设置
-        self.nvidia_nim_endpoint = settings.NVIDIA_NIM_ENDPOINT
-        self.nvidia_nim_api_key = settings.NVIDIA_NIM_API_KEY
-        self.nvidia_nim_default_model = settings.NVIDIA_NIM_DEFAULT_MODEL
-        
-        # OpenRouter API设置
-        self.openrouter_endpoint = settings.OPENROUTER_ENDPOINT
-        self.openrouter_api_key = settings.OPENROUTER_API_KEY
-        self.openrouter_default_model = settings.OPENROUTER_DEFAULT_MODEL
-        
-        # 存储最近生成的图片
+        # 存儲最近生成的圖片
         self.last_generated_image = None
         
-        # 使用量文件路径
+        # 使用量文件路徑
         self.usage_path = "./data/usage.json"
         
-        # 确保目录存在
+        # 確保目錄存在
         os.makedirs(os.path.dirname(self.usage_path), exist_ok=True)
         
-        # 如果文件不存在，创建初始文件
+        # 如果文件不存在，創建初始文件
         if not os.path.exists(self.usage_path):
             with open(self.usage_path, "w") as f:
                 json.dump({"date": datetime.now().strftime("%Y-%m-%d")}, f)
+    
+    def get_provider(self, provider_type: ModelProvider) -> BaseProvider:
+        """
+        獲取指定類型的 Provider
+        
+        Args:
+            provider_type: Provider 類型
+            
+        Returns:
+            對應的 Provider 實例
+        """
+        return self.providers.get(provider_type)
 
     ## MARK: 处理用户使用量统计
     async def update_user_usage(self, user_id: str, model_name: str) -> Dict[str, Any]:
@@ -773,31 +756,168 @@ class LLMService:
                 
         return user_message
 
+    # MARK: 收集流式響應為完整響應
+    async def collect_stream_response(
+        self,
+        stream_generator,
+        model_name: str = ""
+    ) -> Dict[str, Any]:
+        """
+        收集流式響應並組合為完整的響應對象
+        
+        Args:
+            stream_generator: 流式響應生成器
+            model_name: 模型名稱（用於構建響應）
+            
+        Returns:
+            完整的響應對象（OpenAI 格式）
+        """
+        full_content = ""
+        tool_calls = []
+        tool_calls_map = {}  # 用於累積工具調用
+        finish_reason = None
+        usage = None
+        response_id = None
+        
+        try:
+            async for chunk in stream_generator:
+                # 處理錯誤響應（流式錯誤格式）
+                if "error" in chunk:
+                    error_info = chunk.get("error", {})
+                    if isinstance(error_info, dict):
+                        return {
+                            "error": error_info.get("message", "未知錯誤"),
+                            "detail": error_info.get("detail", str(error_info))
+                        }
+                    return {"error": str(error_info), "detail": ""}
+                
+                # 提取響應 ID
+                if not response_id and "id" in chunk:
+                    response_id = chunk["id"]
+                
+                # 處理 choices
+                if "choices" in chunk and chunk["choices"]:
+                    choice = chunk["choices"][0]
+                    delta = choice.get("delta", {})
+                    
+                    # 累積內容
+                    if "content" in delta and delta["content"]:
+                        full_content += delta["content"]
+                    
+                    # 處理工具調用
+                    if "tool_calls" in delta:
+                        for tc in delta["tool_calls"]:
+                            idx = tc.get("index", 0)
+                            if idx not in tool_calls_map:
+                                tool_calls_map[idx] = {
+                                    "id": tc.get("id", ""),
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc.get("function", {}).get("name", ""),
+                                        "arguments": ""
+                                    }
+                                }
+                            # 累積函數參數和其他信息
+                            if "function" in tc:
+                                func = tc["function"]
+                                if "arguments" in func and func["arguments"]:
+                                    tool_calls_map[idx]["function"]["arguments"] += func["arguments"]
+                                if "name" in func and func["name"]:
+                                    tool_calls_map[idx]["function"]["name"] = func["name"]
+                            if "id" in tc and tc["id"]:
+                                tool_calls_map[idx]["id"] = tc["id"]
+                    
+                    # 檢查結束原因
+                    if choice.get("finish_reason"):
+                        finish_reason = choice["finish_reason"]
+                
+                # 提取使用量
+                if "usage" in chunk:
+                    usage = chunk["usage"]
+        
+        except Exception as e:
+            logger.error(f"收集流式響應時出錯: {str(e)}")
+            return {"error": "流式響應收集失敗", "detail": str(e)}
+        
+        # 構建工具調用列表（確保每個工具調用都有有效的 ID）
+        if tool_calls_map:
+            tool_calls = []
+            for i in sorted(tool_calls_map.keys()):
+                tc = tool_calls_map[i]
+                # 確保 tool_call 有有效的 ID
+                if not tc.get("id"):
+                    tc["id"] = f"call_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{i}"
+                tool_calls.append(tc)
+            logger.debug(f"收集到 {len(tool_calls)} 個 tool_calls: {[{'id': tc['id'], 'name': tc['function']['name']} for tc in tool_calls]}")
+        
+        # 構建完整響應
+        message = {
+            "role": "assistant",
+            "content": full_content
+        }
+        
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+            if not finish_reason:
+                finish_reason = "tool_calls"
+            logger.debug(f"Assistant 消息包含 tool_calls，finish_reason={finish_reason}")
+        
+        if not finish_reason:
+            finish_reason = "stop"
+        
+        return {
+            "id": response_id or f"chatcmpl-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "object": "chat.completion",
+            "created": int(datetime.now().timestamp()),
+            "model": model_name,
+            "choices": [{
+                "index": 0,
+                "message": message,
+                "finish_reason": finish_reason
+            }],
+            "usage": usage or {
+                "prompt_tokens": -1,
+                "completion_tokens": -1,
+                "total_tokens": -1
+            }
+        }
+
     # MARK: 发送LLM请求      
     async def send_llm_request(
         self,
         messages: List[Dict[str, Any]],
         model_name: str,
         tools: Optional[List[Dict[str, Any]]] = None,
-        skip_content_check: bool = False
-    ) -> Dict[str, Any]:
+        skip_content_check: bool = False,
+        stream: bool = False,
+        **kwargs
+    ):
         """
-        发送LLM请求 - 调用大型语言模型API
+        發送 LLM 請求 - 統一的模型調用接口
+        
+        所有 Provider 都使用流式模式，此方法會根據 stream 參數決定：
+        - stream=True: 直接返回流式生成器
+        - stream=False: 收集流式響應並返回完整響應
         
         Args:
-            messages: 消息列表（包括系统提示和用户输入）
-            model_name: 模型名称
-            tools: 可选的工具定义列表
+            messages: 消息列表（包括系統提示和用戶輸入）
+            model_name: 模型名稱
+            tools: 可選的工具定義列表
+            skip_content_check: 是否跳過內容長度檢查
+            stream: 是否返回流式響應（默認 False，返回完整響應）
+            **kwargs: 額外參數傳遞給 Provider
             
         Returns:
-            API响应结果
+            如果 stream=False: 完整的 API 響應結果 (Dict)
+            如果 stream=True: 異步生成器 (AsyncIterator)
         """
-        # 只针对GitHub模型请求做内容长度管理
-        provider = self._get_model_provider(model_name)
-        if provider == ModelProvider.GITHUB and not skip_content_check:
+        # 確定模型提供商
+        provider_type = self._get_model_provider(model_name)
+        
+        # 只針對 GitHub 模型請求做內容長度管理
+        if provider_type == ModelProvider.GITHUB and not skip_content_check:
             try:
                 from app.utils.tools import ensure_content_length
-                # 处理所有消息中的内容（不限于用户消息）
                 for i, message in enumerate(messages):
                     if "content" in message and isinstance(message["content"], str):
                         original_length = len(message["content"])
@@ -807,671 +927,72 @@ class LLMService:
                             context_description=f"{message.get('role', 'unknown').capitalize()} message"
                         )
                         if len(message["content"]) < original_length:
-                            logger.info(f"{message.get('role', '消息')}消息已优化，原长度: {original_length}, 优化后: {len(message['content'])}")
+                            logger.info(f"{message.get('role', '消息')}消息已優化，原長度: {original_length}, 優化後: {len(message['content'])}")
             except Exception as e:
-                logger.warning(f"消息长度管理失败，继续使用原始消息: {str(e)}")
+                logger.warning(f"消息長度管理失敗，繼續使用原始消息: {str(e)}")
         
+        # 獲取對應的 Provider 並發送請求
+        provider = self.providers.get(provider_type)
+        if provider is None:
+            logger.error(f"未找到對應的 Provider: {provider_type}")
+            error_response = {"error": f"未找到對應的 Provider: {provider_type}", "detail": ""}
+            if stream:
+                async def error_gen():
+                    yield error_response
+                return error_gen()
+            return error_response
         
-        # 确定模型提供商
-        provider = self._get_model_provider(model_name)        
-        # 根据提供商调用相应的请求方法
-        if provider == ModelProvider.GEMINI:
-            return await self._send_gemini_request(messages, model_name, tools)
-        elif provider == ModelProvider.OLLAMA:
-            return await self._send_ollama_request(messages, model_name, tools)
-        elif provider == ModelProvider.NVIDIA_NIM:
-            return await self._send_nvidia_nim_request(messages, model_name, tools)
-        elif provider == ModelProvider.OPENROUTER:
-            return await self._send_openrouter_request(messages, model_name, tools)
-        else:  # 默认使用GitHub模型
-            return await self._send_github_request(messages, model_name, tools)
-
-    # MARK: 发送GitHub模型请求
-    async def _send_github_request(
-        self,
-        messages: List[Dict[str, Any]],
-        model_name: str,
-        tools: Optional[List[Dict[str, Any]]] = None
-    ) -> Dict[str, Any]:
-        """
-        发送GitHub模型请求
+        if not provider.is_available():
+            logger.warning(f"Provider {provider_type.value} 不可用")
+            error_response = {"error": f"Provider {provider_type.value} 不可用", "detail": "請檢查配置"}
+            if stream:
+                async def error_gen():
+                    yield error_response
+                return error_gen()
+            return error_response
         
-        Args:
-            messages: 消息列表
-            model_name: 模型名称
-            tools: 可选的工具定义
+        # 在發送前檢查消息格式（調試用）
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            tool_calls_in_msg = msg.get("tool_calls")
+            tool_call_id = msg.get("tool_call_id")
             
-        Returns:
-            API响应结果
-        """
-        url = f"{self.github_endpoint}/chat/completions"
-        headers = {
-            "api-key": self.github_api_key,
-            "Content-Type": "application/json"
-        }
-        
-        # 构建请求体
-        body = {
-            "messages": messages,
-            "model": model_name
-        }
-        
-        # 对支持工具的模型添加工具定义
-        if tools and model_name.lower() not in [m.lower() for m in settings.UNSUPPORTED_TOOL_MODELS]:
-            body["tools"] = tools
-            
-        try:
-            # 发送异步HTTP请求
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=body,
-                    timeout=settings.LLM_REQUEST_TIMEOUT  # 使用配置的超時時間
-                )
-                
-                  # 处理错误响应
-                if response.status_code != 200:
-                    logger.error(f"GitHub LLM API错误 {response.status_code}: {response.text}")
-                    return {"error": f"API错误 {response.status_code}", "detail": response.text}
-                
-                # 返回成功响应
-                return response.json()
-        except Exception as e:
-            logger.error(f"GitHub LLM请求错误: {str(e)}")
-            return {"error": "请求错误", "detail": str(e)}
-
-    # MARK: 发送Gemini模型请求
-    async def _send_gemini_request(
-        self,
-        messages: List[Dict[str, Any]],
-        model_name: str,
-        tools: Optional[List[Dict[str, Any]]] = None
-    ) -> Dict[str, Any]:
-        """
-        发送Gemini模型请求
-        
-        Args:
-            messages: 消息列表
-            model_name: 模型名称
-            tools: 可选的工具定义
-            
-        Returns:
-            格式化后的API响应结果，使其与GitHub模型响应格式一致
-        """
-        if not GEMINI_AVAILABLE or not self.gemini_client:
-            return {"error": "Gemini不可用，请安装google-genai库并设置API密钥"}
-        
-        try:
-            # 转换消息格式为Gemini格式
-            gemini_messages = []
-            for msg in messages:
-                role = msg.get("role", "").lower()
-                content = msg.get("content", "")
-                
-                # 构建Gemini消息
-                if isinstance(content, str):
-                    parts = [types.Part.from_text(text=content)]
-                elif isinstance(content, list):
-                    parts = []
-                    for item in content:
-                        if item.get("type") == "text":
-                            parts.append(types.Part.from_text(text=item.get("text", "")))
-                        elif item.get("type") == "image_url":
-                            image_url = item.get("image_url", {}).get("url", "")
-                            if image_url.startswith("data:image"):
-                                # 处理base64图片
-                                image_base64 = image_url.split(",")[1]
-                                parts.append(types.Part.from_data(data=base64.b64decode(image_base64)))
-                
-                # 映射角色
-                gemini_role = "user"
-                if role == "system":
-                    gemini_role = "user"  # Gemini没有system角色，用user替代
-                elif role == "assistant":
-                    gemini_role = "model"
-                
-                gemini_messages.append(types.Content(role=gemini_role, parts=parts))
-            
-            # 配置生成参数和工具定义（如果提供）
-            gemini_tools = None
-            if tools:
-                # 将OpenAI/GitHub格式的工具转换为Gemini格式
-                function_declarations = []
-                for tool in tools:
-                    if tool.get("type") == "function":
-                        function_info = tool.get("function", {})
-                        # 创建符合Gemini格式的函数声明
-                        declaration = {
-                            "name": function_info.get("name", ""),
-                            "description": function_info.get("description", ""),
-                            "parameters": function_info.get("parameters", {})
-                        }
-                        function_declarations.append(declaration)
-                        logger.info(f"转换工具为Gemini格式: {declaration['name']}")
-                
-                if function_declarations:
-                    try:
-                        # 创建Gemini工具定义
-                        gemini_tools = types.Tool(function_declarations=function_declarations)
-                        logger.info(f"成功创建Gemini工具定义，函数数量: {len(function_declarations)}")
-                    except Exception as e:
-                        logger.error(f"创建Gemini工具定义失败: {str(e)}")
-            
-            # 配置生成参数
-            generate_config = types.GenerateContentConfig(
-                response_mime_type="text/plain",
-            )
-            
-            # 如果有工具定义，添加到配置中
-            if gemini_tools:
-                generate_config.tools = [gemini_tools]
-            
-            # 发送请求并处理响应
-            function_call = None
-            response_text = ""
-            
-            try:
-                # 获取完整响应
-                response = await self._collect_gemini_stream(model_name, gemini_messages, generate_config)
-                
-                # 如果是字符串，检查是否是错误消息
-                if isinstance(response, str):
-                    # 检查是否是错误响应
-                    if response.startswith("Gemini响应错误:") or response.startswith("Gemini请求超时"):
-                        return {"error": response, "detail": response}
-                    response_text = response
-                else:
-                    # 处理完整响应对象 - 可能包含函数调用
-                    if hasattr(response, 'candidates') and response.candidates:
-                        for candidate in response.candidates:
-                            if hasattr(candidate, 'content') and candidate.content:
-                                for part in candidate.content.parts:
-                                    # 处理函数调用
-                                    if hasattr(part, 'function_call') and part.function_call:
-                                        function_call = {
-                                            "name": part.function_call.name,
-                                            "arguments": part.function_call.args
-                                        }
-                                        logger.info(f"Gemini返回工具调用: {function_call['name']}")
-                                    # 处理文本部分（如果有）
-                                    elif hasattr(part, 'text') and part.text:
-                                        if response_text:
-                                            response_text += " " + part.text
-                                        else:
-                                            response_text = part.text
-            
-            except Exception as e:
-                logger.error(f"Gemini请求错误: {str(e)}")
-                return {"error": "Gemini请求失败", "detail": str(e)}
-            
-            # 构建与GitHub模型响应格式一致的响应
-            choices = [{
-                "message": {
-                    "role": "assistant",
-                    "content": response_text if response_text else None  # 如果没有文本内容则设为None
-                },
-                "finish_reason": "stop"
-            }]
-            
-            # 如果有工具调用，添加到响应中
-            if function_call:
-                if not choices[0]["message"]["content"]:
-                    # 如果没有文本内容，将content设置为空字符串而不是None
-                    choices[0]["message"]["content"] = ""
+            # 檢查 tool 消息是否有對應的 assistant 消息帶有 tool_calls
+            if role == "tool":
+                # 確保有 tool_call_id
+                if not tool_call_id:
+                    logger.warning(f"Message[{i}] role=tool 缺少 tool_call_id")
                     
-                choices[0]["message"]["tool_calls"] = [{
-                    "id": f"call_{datetime.now().timestamp()}",
-                    "type": "function",
-                    "function": {
-                        "name": function_call["name"],
-                        "arguments": json.dumps(function_call["arguments"]) 
-                        if isinstance(function_call["arguments"], dict) else function_call["arguments"]
-                    }
-                }]
-            
-            return {
-                "choices": choices,
-                "model": model_name,
-                "id": f"gemini-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                "created": int(datetime.now().timestamp()),
-                "usage": {
-                    "prompt_tokens": -1,  # Gemini不提供token计数
-                    "completion_tokens": -1,
-                    "total_tokens": -1
-                }
-            }
-        except Exception as e:
-            logger.error(f"Gemini请求错误: {str(e)}")
-            return {"error": "Gemini请求错误", "detail": str(e)}    
-    async def _collect_gemini_stream(self, model_name, contents, config):
-        """
-        收集Gemini流式响应的完整内容
+                # 檢查是否有前一個 assistant 消息有 tool_calls
+                has_matching_assistant = False
+                for j in range(i - 1, -1, -1):
+                    prev_msg = messages[j]
+                    if prev_msg.get("role") == "assistant" and prev_msg.get("tool_calls"):
+                        for tc in prev_msg["tool_calls"]:
+                            if tc.get("id") == tool_call_id:
+                                has_matching_assistant = True
+                                break
+                        if has_matching_assistant:
+                            break
+                
+                if not has_matching_assistant:
+                    logger.warning(f"Message[{i}] role=tool (tool_call_id={tool_call_id}) 沒有找到匹配的 assistant tool_calls")
         
-        Args:
-            model_name: 模型名称
-            contents: Gemini格式的内容
-            config: 生成配置
-            
-        Returns:
-            完整的响应文本或响应对象(如果有工具调用)
-        """
-        try:
-            # 直接使用非流式API以避免异步/同步混合问题
-            logger.info(f"使用非流式API获取Gemini响应，模型: {model_name}")
-            
-            # 先尝试在执行器中运行同步代码
-            def get_response():
-                try:
-                    return self.gemini_client.models.generate_content(
-                        model=model_name,
-                        contents=contents,
-                        config=config,
-                    )
-                except Exception as inner_error:
-                    logger.error(f"Gemini API调用失败: {str(inner_error)}")
-                    # 如果错误是因为安全过滤，尝试使用更宽松的安全设置
-                    if "blocked" in str(inner_error).lower() or "safety" in str(inner_error).lower():
-                        logger.info("尝试使用更宽松的安全设置重新请求")
-                        # 配置更宽松的安全设置
-                        safer_config = config
-                        
-                        # 添加安全设置，降低阈值
-                        if GEMINI_AVAILABLE and hasattr(types, 'HarmCategory') and hasattr(types, 'HarmBlockThreshold'):
-                            safer_config.safety_settings = [
-                                {
-                                    "category": types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                                    "threshold": types.HarmBlockThreshold.BLOCK_ONLY_HIGH
-                                },
-                                {
-                                    "category": types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                                    "threshold": types.HarmBlockThreshold.BLOCK_ONLY_HIGH
-                                },
-                                {
-                                    "category": types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                                    "threshold": types.HarmBlockThreshold.BLOCK_ONLY_HIGH
-                                },
-                                {
-                                    "category": types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                                    "threshold": types.HarmBlockThreshold.BLOCK_ONLY_HIGH
-                                }
-                            ]
-                        else:
-                            # 兼容旧版API或导入失败的情况
-                            safer_config.safety_settings = [
-                                {
-                                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                                    "threshold": "BLOCK_ONLY_HIGH"
-                                },
-                                {
-                                    "category": "HARM_CATEGORY_HATE_SPEECH",
-                                    "threshold": "BLOCK_ONLY_HIGH"
-                                },
-                                {
-                                    "category": "HARM_CATEGORY_HARASSMENT",
-                                    "threshold": "BLOCK_ONLY_HIGH"
-                                },
-                                {
-                                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                                    "threshold": "BLOCK_ONLY_HIGH"
-                                }
-                            ]
-                            
-                        return self.gemini_client.models.generate_content(
-                            model=model_name,
-                            contents=contents,
-                            config=safer_config,
-                        )
-                    raise
-            
-            # 在线程池中运行同步代码（添加超时控制）
-            loop = asyncio.get_running_loop()
-            try:
-                response = await asyncio.wait_for(
-                    loop.run_in_executor(None, get_response),
-                    timeout=settings.LLM_REQUEST_TIMEOUT  # 使用配置的超時時間
-                )
-            except asyncio.TimeoutError:
-                logger.error(f"Gemini请求超时（{settings.LLM_REQUEST_TIMEOUT}秒）")
-                return "Gemini请求超时，请稍后重试"
-            
-            # 检查是否存在函数调用，如果有就直接返回完整响应对象
-            # 这样可以避免尝试提取不存在的文本部分
-            if hasattr(response, 'candidates') and response.candidates:
-                for candidate in response.candidates:
-                    if hasattr(candidate, 'content') and candidate.content and hasattr(candidate.content, 'parts'):
-                        for part in candidate.content.parts:
-                            if hasattr(part, 'function_call') and part.function_call:
-                                logger.info("检测到函数调用，返回完整响应对象")
-                                return response
-            
-            # 如果没有函数调用，尝试获取文本响应
-            # 使用 getattr 避免直接访问 text 属性可能引起的错误
-            response_text = getattr(response, 'text', None)
-            if response_text is not None:
-                logger.info(f"返回Gemini文本响应，长度: {len(response_text)}")
-                return response_text
-            
-            # 尝试从候选结果中提取文本
-            text_parts = []
-            if hasattr(response, 'candidates') and response.candidates:
-                for candidate in response.candidates:
-                    if hasattr(candidate, 'content') and candidate.content:
-                        if hasattr(candidate.content, 'parts'):
-                            for part in candidate.content.parts:
-                                if hasattr(part, 'text') and part.text:
-                                    text_parts.append(part.text)
-            
-            if text_parts:
-                return " ".join(text_parts)
-            
-            # 如果没有找到任何文本或函数调用，返回空字符串而不是错误消息
-            # 这样可以正常处理只有函数调用没有文本的情况
-            return ""
-            
-        except Exception as e:
-            logger.error(f"获取Gemini响应时出错: {str(e)}")
-            return f"Gemini响应错误: {str(e)}"
-
-    # MARK: 发送Ollama模型请求
-    async def _send_ollama_request(
-        self,
-        messages: List[Dict[str, Any]],
-        model_name: str,
-        tools: Optional[List[Dict[str, Any]]] = None
-    ) -> Dict[str, Any]:
-        """
-        发送Ollama模型请求
+        # 獲取流式生成器（不需要 await，因為 send_request 直接返回 AsyncIterator）
+        stream_generator = provider.send_request(
+            messages=messages,
+            model_name=model_name,
+            tools=tools,
+            **kwargs
+        )
         
-        Args:
-            messages: 消息列表
-            model_name: 模型名称
-            tools: 可选的工具定义
-            
-        Returns:
-            格式化后的API响应结果，使其与其他模型响应格式一致
-        """
-        try:
-            # 构建请求URL
-            url = f"{self.ollama_endpoint}/api/chat"
-            
-            # 构建请求头
-            headers = {
-                "Content-Type": "application/json"
-            }
-            
-            # 如果设置了API密钥，则添加认证头
-            if self.ollama_api_key:
-                headers["Authorization"] = f"Bearer {self.ollama_api_key}"
-            
-            # 构建请求体
-            body = {
-                "model": model_name,
-                "messages": messages,
-                "stream": False  # 我们使用非流式响应以保持与其他提供商的一致性
-            }
-            
-            # 如果有工具定义，将其添加到请求中
-            # Ollama支持OpenAI兼容的工具调用格式
-            if tools and model_name not in [m.lower() for m in settings.UNSUPPORTED_TOOL_MODELS]:
-                body["tools"] = tools
-                # 强制模型使用工具（如果可用）
-                # body["tool_choice"] = "auto"  # 可选：让模型自动决定是否使用工具
-            
-            # 发送请求到Ollama
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=body,
-                    timeout=settings.OLLAMA_REQUEST_TIMEOUT  # 使用配置的超時時間（本地模型可能需要更長時間）
-                )
-                
-                # 处理错误响应
-                if response.status_code != 200:
-                    logger.error(f"Ollama API错误 {response.status_code}: {response.text}")
-                    return {"error": f"Ollama API错误 {response.status_code}", "detail": response.text}
-                
-                # 解析响应
-                ollama_response = response.json()
-                
-                # 将Ollama响应格式转换为标准格式
-                # Ollama的响应格式类似：
-                # {
-                #   "model": "qwen2.5:7b",
-                #   "created_at": "2023-12-07T09:32:69.123456Z",
-                #   "message": {
-                #     "role": "assistant",
-                #     "content": "Hello! How can I help you today?"
-                #   },
-                #   "done": true
-                # }
-                
-                # 转换为OpenAI兼容格式
-                formatted_response = {
-                    "choices": [{
-                        "index": 0,
-                        "message": {
-                            "role": ollama_response.get("message", {}).get("role", "assistant"),
-                            "content": ollama_response.get("message", {}).get("content", ""),
-                        },
-                        "finish_reason": "stop" if ollama_response.get("done", False) else "length"
-                    }],
-                    "model": ollama_response.get("model", model_name),
-                    "usage": {
-                        # Ollama通常不提供详细的使用量信息，我们提供估算值
-                        "prompt_tokens": ollama_response.get("prompt_eval_count", 0),
-                        "completion_tokens": ollama_response.get("eval_count", 0),
-                        "total_tokens": ollama_response.get("prompt_eval_count", 0) + ollama_response.get("eval_count", 0)
-                    }
-                }
-                
-                # 处理工具调用
-                message = ollama_response.get("message", {})
-                if "tool_calls" in message and message["tool_calls"]:
-                    formatted_response["choices"][0]["message"]["tool_calls"] = message["tool_calls"]
-                    formatted_response["choices"][0]["finish_reason"] = "tool_calls"
-                
-                logger.info(f"Ollama请求成功，模型: {model_name}, 响应长度: {len(formatted_response['choices'][0]['message'].get('content', ''))}")
-                return formatted_response
-                
-        except httpx.ConnectError as e:
-            logger.error(f"无法连接到Ollama服务器 {self.ollama_endpoint}: {str(e)}")
-            return {"error": "连接Ollama服务器失败", "detail": f"请确保Ollama服务正在 {self.ollama_endpoint} 运行"}
-        except httpx.TimeoutException as e:
-            logger.error(f"Ollama请求超时: {str(e)}")
-            return {"error": "Ollama请求超时", "detail": "请求处理时间过长，请稍后重试"}
-        except Exception as e:
-            logger.error(f"Ollama请求错误: {str(e)}")
-            return {"error": "Ollama请求错误", "detail": str(e)}
-
-    # MARK: 发送NVIDIA NIM请求
-    async def _send_nvidia_nim_request(
-        self,
-        messages: List[Dict[str, Any]],
-        model_name: str,
-        tools: Optional[List[Dict[str, Any]]] = None
-    ) -> Dict[str, Any]:
-        """
-        发送NVIDIA NIM请求
-        
-        Args:
-            messages: 消息列表
-            model_name: 模型名称
-            tools: 可选的工具定义
-            
-        Returns:
-            API响应结果
-        """
-        try:
-            url = self.nvidia_nim_endpoint
-            headers = {
-                "Authorization": f"Bearer {self.nvidia_nim_api_key}",
-                "Accept": "application/json",
-                "Content-Type": "application/json"
-            }
-            
-            # 构建请求体
-            body = {
-                "model": model_name,
-                "messages": messages,
-                "max_tokens": 8192,
-                "temperature": 0.20,
-                "top_p": 0.70,
-                "frequency_penalty": 0.00,
-                "presence_penalty": 0.00,
-                "stream": False  # 使用非流式响应
-            }
-            
-            # 如果有工具定义，将其添加到请求中
-            # NVIDIA NIM支持OpenAI兼容的工具调用格式
-            if tools and model_name not in [m.lower() for m in settings.UNSUPPORTED_TOOL_MODELS]:
-                body["tools"] = tools
-                body["tool_choice"] = "auto"  # 让模型自动决定是否使用工具
-            
-            # 发送请求到NVIDIA NIM
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=body,
-                    timeout=settings.LLM_REQUEST_TIMEOUT  # 使用配置的超時時間
-                )
-                
-                # 处理错误响应
-                if response.status_code != 200:
-                    logger.error(f"NVIDIA NIM API错误 {response.status_code}: {response.text}")
-                    return {"error": f"NVIDIA NIM API错误 {response.status_code}", "detail": response.text}
-                
-                # 解析响应
-                nim_response = response.json()
-                
-                # NVIDIA NIM API返回OpenAI兼容格式，可以直接使用
-                logger.info(f"NVIDIA NIM请求成功，模型: {model_name}, 响应长度: {len(nim_response.get('choices', [{}])[0].get('message', {}).get('content', ''))}")
-                return nim_response
-                
-        except httpx.ConnectError as e:
-            logger.error(f"无法连接到NVIDIA NIM服务器 {self.nvidia_nim_endpoint}: {str(e)}")
-            return {"error": "连接NVIDIA NIM服务器失败", "detail": f"请检查网络连接和API端点 {self.nvidia_nim_endpoint}"}
-        except httpx.TimeoutException as e:
-            logger.error(f"NVIDIA NIM请求超时: {str(e)}")
-            return {"error": "NVIDIA NIM请求超时", "detail": "请求处理时间过长，请稍后重试"}
-        except Exception as e:
-            logger.error(f"NVIDIA NIM请求错误: {str(e)}")
-            return {"error": "NVIDIA NIM请求错误", "detail": str(e)}
-
-    # MARK: 发送OpenRouter请求
-    async def _send_openrouter_request(
-        self,
-        messages: List[Dict[str, Any]],
-        model_name: str,
-        tools: Optional[List[Dict[str, Any]]] = None
-    ) -> Dict[str, Any]:
-        """
-        发送OpenRouter请求 - OpenRouter是一个API聚合服务，提供对多种模型的访问
-        
-        Args:
-            messages: 消息列表
-            model_name: 模型名称
-            tools: 可选的工具定义
-            
-        Returns:
-            API响应结果
-        """
-        try:
-            url = self.openrouter_endpoint or "https://openrouter.ai/api/v1/chat/completions"
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.openrouter_api_key}",
-                "HTTP-Referer": settings.OPENROUTER_APP_URL,  # OpenRouter建议提供referer
-                "X-Title": settings.OPENROUTER_APP_TITLE   # 应用名称
-            }
-            
-            # 构建请求体
-            body = {
-                "model": model_name,
-                "messages": messages,
-                "stream": False  # 使用非流式响应
-            }
-            
-            # 添加可选参数
-            if tools and model_name not in [m.lower() for m in settings.UNSUPPORTED_TOOL_MODELS]:
-                body["tools"] = tools
-                body["tool_choice"] = "auto"  # 让模型自动决定是否使用工具
-            
-            # 发送请求到OpenRouter
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=body,
-                    timeout=settings.LLM_REQUEST_TIMEOUT  # 使用配置的超時時間
-                )
-                
-                # 处理错误响应
-                if response.status_code != 200:
-                    logger.error(f"OpenRouter API错误 {response.status_code}: {response.text}")
-                    return {"error": f"OpenRouter API错误 {response.status_code}", "detail": response.text}
-                
-                # 解析响应
-                openrouter_response = response.json()
-                
-                # 添加调试日志以了解OpenRouter响应格式
-                logger.info(f"OpenRouter原始响应结构: {json.dumps(openrouter_response, indent=2, ensure_ascii=False)[:500]}...")
-                
-                # 验证并标准化OpenRouter响应格式
-                # 虽然OpenRouter声称返回OpenAI兼容格式，但我们需要确保格式完整性
-                if "choices" not in openrouter_response or not openrouter_response["choices"]:
-                    logger.error("OpenRouter响应格式错误：缺少choices字段")
-                    return {"error": "OpenRouter响应格式错误", "detail": "响应中缺少choices字段"}
-                
-                # 确保响应包含必要字段
-                standardized_response = {
-                    "choices": openrouter_response.get("choices", []),
-                    "model": openrouter_response.get("model", model_name),
-                    "id": openrouter_response.get("id", f"openrouter-{datetime.now().strftime('%Y%m%d%H%M%S')}"),
-                    "created": openrouter_response.get("created", int(datetime.now().timestamp())),
-                    "usage": openrouter_response.get("usage", {
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "total_tokens": 0
-                    })
-                }
-                
-                # 验证choices结构并处理特殊的推理模型响应
-                for i, choice in enumerate(standardized_response["choices"]):
-                    if "message" not in choice:
-                        choice["message"] = {"role": "assistant", "content": ""}
-                    if "finish_reason" not in choice:
-                        choice["finish_reason"] = "stop"
-                    if "index" not in choice:
-                        choice["index"] = i
-                    
-                    # 检查推理类模型的特殊字段
-                    message = choice.get("message", {})
-                    
-                    # 如果content为空但存在reasoning字段，使用reasoning内容
-                    if not message.get("content") and message.get("reasoning"):
-                        logger.info("检测到推理模型响应，使用reasoning字段作为内容")
-                        choice["message"]["content"] = message["reasoning"]
-                    
-                    # 如果content仍为空，检查是否有refusal字段
-                    elif not message.get("content") and message.get("refusal"):
-                        logger.info("检测到模型拒绝响应，使用refusal字段")
-                        choice["message"]["content"] = f"抱歉，我无法回答这个问题：{message['refusal']}"
-                
-                logger.info(f"OpenRouter请求成功，模型: {model_name}, 响应长度: {len(standardized_response.get('choices', [{}])[0].get('message', {}).get('content', ''))}")
-                return standardized_response
-                
-        except httpx.ConnectError as e:
-            logger.error(f"无法连接到OpenRouter服务器 {url}: {str(e)}")
-            return {"error": "连接OpenRouter服务器失败", "detail": f"请检查网络连接和API端点 {url}"}
-        except httpx.TimeoutException as e:
-            logger.error(f"OpenRouter请求超时: {str(e)}")
-            return {"error": "OpenRouter请求超时", "detail": "请求处理时间过长，请稍后重试"}
-        except Exception as e:
-            logger.error(f"OpenRouter请求错误: {str(e)}")
-            return {"error": "OpenRouter请求错误", "detail": str(e)}
+        if stream:
+            # 直接返回流式生成器
+            return stream_generator
+        else:
+            # 收集流式響應為完整響應
+            return await self.collect_stream_response(stream_generator, model_name)
         
     # MARK: 处理工具调用
     async def handle_tool_call(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1521,7 +1042,11 @@ class LLMService:
                 if isinstance(arguments_str, dict):
                     arguments = arguments_str
                 elif isinstance(arguments_str, str):
-                    arguments = json.loads(arguments_str)
+                    # 處理空字符串的情況
+                    if not arguments_str or not arguments_str.strip():
+                        arguments = {}
+                    else:
+                        arguments = json.loads(arguments_str)
                 else:
                     logger.error(f"工具调用参数格式错误: {type(arguments_str)}")
                     continue

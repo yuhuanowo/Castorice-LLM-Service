@@ -423,6 +423,83 @@ async def save_to_session(
                 "duration": tool.get("duration", 0)
             })
         
+        # 構建 react_steps（用於前端 UI 展示）
+        react_steps = []
+        
+        # 類型映射
+        type_map = {
+            "thought": "thought",
+            "action": "action",
+            "observation": "observation",
+            "reflection": "reflection",
+            "decision": "decision"
+        }
+        
+        # 從 reasoning_steps 構建（包含思考和反思內容）
+        for step in reasoning_steps:
+            step_type = step.get("type", "thought")
+            step_content = step.get("content", "")
+            step_tool = step.get("tool")
+            step_result = step.get("result")
+            
+            # 生成標籤
+            if step_tool:
+                step_label = f"調用 {step_tool}"
+            elif step_content:
+                step_label = step_content[:50] + ("..." if len(step_content) > 50 else "")
+            else:
+                step_label = step.get("title", step_type)
+            
+            react_step = {
+                "type": type_map.get(step_type, "thought"),
+                "label": step_label,
+                "content": step_content,
+                "complete": True,
+                "timestamp": step.get("timestamp")
+            }
+            
+            # 如果有工具信息，添加
+            if step_tool:
+                react_step["toolName"] = step_tool
+            if step_result:
+                react_step["toolResult"] = step_result
+                
+            react_steps.append(react_step)
+        
+        # 如果沒有 reasoning_steps，從 execution_trace 構建
+        if not react_steps:
+            status_map = {
+                "planning": "thought",
+                "executing": "action",
+                "completed": "observation",
+                "failed": "observation"
+            }
+            for trace in execution_trace:
+                trace_details = trace.get("details")
+                react_steps.append({
+                    "type": status_map.get(trace.get("status"), "thought"),
+                    "label": trace.get("action", f"步驟 {trace.get('step', 1)}"),
+                    "content": str(trace_details) if trace_details else None,
+                    "complete": trace.get("status") == "completed",
+                    "timestamp": trace.get("timestamp")
+                })
+        
+        # 補充工具調用步驟（確保每個工具調用都有對應的步驟）
+        for tool in tools_used:
+            tool_name = tool.get("name", "unknown_tool")
+            # 檢查是否已經有這個工具的步驟
+            existing = next((s for s in react_steps if s.get("toolName") == tool_name), None)
+            if not existing:
+                react_steps.append({
+                    "type": "action",
+                    "label": f"調用 {tool_name}",
+                    "content": None,
+                    "complete": True,
+                    "toolName": tool_name,
+                    "toolResult": tool.get("result"),
+                    "timestamp": tool.get("timestamp")
+                })
+        
         execution_time = (datetime.now() - start_time).total_seconds()
         
         # 助手消息（包含完整的UI展示數據）
@@ -437,6 +514,7 @@ async def save_to_session(
             "steps_taken": result.get("steps_taken", 0),
             "execution_trace": execution_trace,
             "reasoning_steps": reasoning_steps,
+            "react_steps": react_steps,
             "tools_used": tools_used,
             "generated_image": result.get("generated_image"),
             "raw_response": {

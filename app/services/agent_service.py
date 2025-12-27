@@ -495,22 +495,36 @@ class AgentService:
                     })
                     
                     # 將助理回覆添加到消息歷史
-                    messages.append({
+                    assistant_msg = {
                         "role": "assistant",
                         "content": content,
                         "tool_calls": tool_calls
-                    })
+                    }
+                    messages.append(assistant_msg)
+                    
+                    # 詳細記錄 tool_calls 的 ID
+                    logger.debug(f"[Agent] 添加 assistant 消息，包含 {len(tool_calls)} 個 tool_calls:")
+                    for tc in tool_calls:
+                        logger.debug(f"  - tool_call_id: {tc.get('id')}, name: {tc.get('function', {}).get('name')}")
                     
                     # 發送工具調用事件
                     for tc in tool_calls:
                         tool_name = tc.get("function", {}).get("name", "unknown")
                         tool_args = tc.get("function", {}).get("arguments", "{}")
                         
+                        # 解析參數以生成更好的描述
+                        try:
+                            args_dict = json.loads(tool_args) if isinstance(tool_args, str) else tool_args
+                            args_preview = ", ".join([f"{k}={str(v)[:30]}" for k, v in args_dict.items()][:3])
+                        except:
+                            args_preview = tool_args[:50] if tool_args else ""
+                        
                         if on_step:
                             await on_step(StreamEvent(
                                 status="executing",
                                 message=f"正在執行工具: {tool_name}",
                                 tool_name=tool_name,
+                                reasoning=f"決定調用工具 {tool_name}({args_preview})",
                                 details={"arguments": tool_args},
                                 step=steps_taken
                             ).to_dict())
@@ -531,12 +545,14 @@ class AgentService:
                     
                     # 將工具結果添加到消息歷史
                     for tool_result in tool_results:
-                        messages.append({
+                        tool_msg = {
                             "role": "tool",
                             "tool_call_id": tool_result["tool_call_id"],
                             "name": tool_result["name"],
                             "content": tool_result["content"]
-                        })
+                        }
+                        messages.append(tool_msg)
+                        logger.debug(f"[Agent] 添加 tool 消息，tool_call_id: {tool_result['tool_call_id']}, name: {tool_result['name']}")
                         
                         # 記錄工具使用（添加 duration 字段）
                         tools_used.append({
@@ -562,6 +578,7 @@ class AgentService:
                                 message=f"工具 {tool_result['name']} 執行完成",
                                 tool_name=tool_result["name"],
                                 tool_result=tool_result["content"][:500],
+                                reasoning=f"觀察到 {tool_result['name']} 的結果：{tool_result['content'][:200]}{'...' if len(tool_result['content']) > 200 else ''}",
                                 step=steps_taken
                             ).to_dict())
                         

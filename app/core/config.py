@@ -895,8 +895,8 @@ class Settings(BaseSettings):
     AGENT_MAX_CONSECUTIVE_FAILURES: int = 3  # 連續失敗上限，超過則停止
     AGENT_ENABLE_GROUND_TRUTH: bool = True  # 啟用 Ground Truth 驗證
     AGENT_ENABLE_DYNAMIC_REFLECTION: bool = True  # 啟用動態反思觸發
-    AGENT_LOOP_DETECTION_WINDOW: int = 3  # 循環檢測窗口大小
-    AGENT_TOOL_TIMEOUT_THRESHOLD: int = 10000  # 工具執行超時閾值（毫秒），超過觸發反思
+    AGENT_LOOP_DETECTION_WINDOW: int = 6  # 循環檢測窗口大小
+    AGENT_TOOL_TIMEOUT_THRESHOLD: int = 30000  # 工具執行超時閾值（毫秒），超過觸發反思
     AGENT_MAX_LLM_RETRIES: int = 3  # LLM請求最大重試次數
     
     # HTTP 超時配置

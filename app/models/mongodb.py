@@ -282,6 +282,8 @@ def add_message_to_session(session_id: str, user_id: str, message: dict, model: 
             message_to_store["reasoning_steps"] = message.get("reasoning_steps")
         if message.get("tools_used"):
             message_to_store["tools_used"] = message.get("tools_used")
+        if message.get("react_steps"):
+            message_to_store["react_steps"] = message.get("react_steps")
             
         # 圖片生成支持
         if message.get("generated_image"):

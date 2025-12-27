@@ -1160,6 +1160,8 @@ export default function ModernChatGPT() {
         }))
 
         // 使用 SSE 流式請求
+        let accumulatedReactSteps: ReactStep[] = []
+        
         await makeAgentStreamRequest(
           body,
           assistantMessage.id,
@@ -1232,11 +1234,14 @@ export default function ModernChatGPT() {
                 const newStep: ReactStep = {
                   type: (phaseMap[step.status] || 'thought') as any,
                   label: stepLabel,
+                  content: step.reasoning || step.message,
                   complete: step.status === 'observing' || step.status === 'responding' || step.status === 'summarizing',
                   toolName: step.tool_name,
                   toolResult: step.tool_result,
                   timestamp: step.timestamp
                 }
+                
+                accumulatedReactSteps.push(newStep)
                 
                 const newTotalSteps = step.step ?? (currentStatus.totalSteps || 0) + 1
                 
@@ -1293,6 +1298,7 @@ export default function ModernChatGPT() {
                 steps_taken: result.steps_taken,
                 execution_trace: result.execution_trace || [],
                 reasoning_steps: result.reasoning_steps || [],
+                react_steps: accumulatedReactSteps, // Use accumulated steps
                 tools_used: result.tools_used || []
               }
 

@@ -9,6 +9,7 @@ export interface Message {
   // Agent 模式增強字段
   execution_trace?: ExecutionTraceItem[]
   reasoning_steps?: ReasoningStep[]
+  react_steps?: ReactStep[]  // 用於前端 UI 展示的步驟
   tools_used?: ToolUsage[]
   // 元數據
   model_used?: string
@@ -55,6 +56,7 @@ export interface ChatHistory {
 export interface ReactStep {
   type: 'thought' | 'decision' | 'reflection' | 'action' | 'observation'
   label: string
+  content?: string
   complete: boolean
   enabled?: boolean
   toolName?: string

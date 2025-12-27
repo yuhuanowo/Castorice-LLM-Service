@@ -19,6 +19,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import { FileManager } from '@/components/FileManager'
+import { AgentSteps } from '@/components/AgentSteps'
 import type { FileStats } from '@/components/FileManager'
 import type { Message, Model, ChatHistory, AgentStatus } from '@/types'
 
@@ -126,6 +127,11 @@ export function MainChatArea({
 
   // 创建一个标志，用于跟踪是否已经恢复过设置
   const [hasRestoredSettings, setHasRestoredSettings] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // 在组件挂载时恢复聊天选项设置
   useEffect(() => {
@@ -572,7 +578,7 @@ export function MainChatArea({
                           <AlertCircle className="w-2.5 h-2.5" />
                         </motion.div>
                       )}
-                      {isLoading && loadingSessionId === currentChatId && (
+                      {isMounted && isLoading && loadingSessionId === currentChatId && (
                         <motion.div
                           initial={{ scale: 0 }}
                           animate={{ scale: 1 }}
@@ -1009,93 +1015,149 @@ export function MainChatArea({
                             })}
                           </span>
                         )}
-                      </div>                        {/* Agent推理步骤展示 */}
+                      </div>                        {/* Agent Steps Display (Unified) */}
+                      {message.role === 'assistant' && message.mode === 'agent' && message.react_steps && message.react_steps.length > 0 && (
+                        <div className="mt-3">
+                           <AgentSteps steps={message.react_steps} />
+                        </div>
+                      )}
+
+                      {/* 推理过程展示 */}
                       {message.role === 'assistant' && message.mode === 'agent' && showReasoningSteps[message.id] && message.reasoning_steps && (
-                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border">
-                          <div className="flex items-center gap-2 mb-3">
-                            <Brain className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-sm font-medium text-muted-foreground">推理过程</span>
+                        <div className="mt-3 rounded-xl border bg-muted/20 backdrop-blur-sm overflow-hidden">
+                          <div className="px-3 py-2 border-b bg-muted/20 flex items-center gap-2">
+                            <Brain className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span className="text-xs font-medium text-foreground">推理過程</span>
+                            <span className="ml-auto text-[10px] text-muted-foreground">{message.reasoning_steps.length}</span>
                           </div>
-                          <div className="space-y-2">
-                            {message.reasoning_steps.map((step, index) => (
-                              <div key={index} className="flex gap-3 p-2 bg-background rounded border-l-2 border-muted">
-                                <div className="shrink-0 mt-1">
-                                  {step.type === 'thought' && <Brain className="w-4 h-4 text-blue-500" />}
-                                  {step.type === 'action' && <Zap className="w-4 h-4 text-green-500" />}
-                                  {step.type === 'observation' && <Eye className="w-4 h-4 text-purple-500" />}
-                                  {step.type === 'reflection' && <AlertCircle className="w-4 h-4 text-orange-500" />}
-                                </div>
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className="text-xs font-medium capitalize text-muted-foreground">
-                                      {step.type === 'thought' && '思考'}
-                                      {step.type === 'action' && '行动'}
-                                      {step.type === 'observation' && '观察'}
-                                      {step.type === 'reflection' && '反思'}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">
-                                      {new Date(step.timestamp).toLocaleTimeString()}
-                                    </span>
+                          <div className="max-h-72 overflow-y-auto p-2 space-y-1">
+                            {message.reasoning_steps.map((step, idx) => (
+                              <details
+                                key={idx}
+                                className="group rounded-lg border border-transparent hover:bg-muted/30 open:bg-background/50 open:border-border/60"
+                              >
+                                <summary className="cursor-pointer select-none px-2 py-1.5 flex items-center gap-2 text-xs [&::-webkit-details-marker]:hidden">
+                                  <span className="text-[10px] text-muted-foreground font-mono w-7 shrink-0">#{idx + 1}</span>
+                                  <span
+                                    className={cn(
+                                      "shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-medium",
+                                      step.type === 'thought' && "bg-blue-500/10 text-blue-600 dark:text-blue-300",
+                                      step.type === 'action' && "bg-violet-500/10 text-violet-600 dark:text-violet-300",
+                                      step.type === 'observation' && "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
+                                      step.type === 'reflection' && "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                                    )}
+                                  >
+                                    {step.type}
+                                  </span>
+                                  <span className="flex-1 min-w-0 text-muted-foreground truncate">
+                                    {step.content}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground shrink-0">
+                                    {new Date(step.timestamp).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </summary>
+                                <div className="px-2 pb-2">
+                                  <div className="rounded-lg border bg-background/50 p-2 text-xs">
+                                    <div className="prose prose-sm dark:prose-invert max-w-none text-muted-foreground leading-relaxed prose-p:my-1">
+                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                        {step.content}
+                                      </ReactMarkdown>
+                                    </div>
                                   </div>
-                                  <div className="text-sm text-foreground whitespace-pre-wrap">
-                                    {step.content || (step as any).result || `工具: ${(step as any).tool || '未知'}`}
-                                  </div>
                                 </div>
-                              </div>
+                              </details>
                             ))}
                           </div>
                         </div>
                       )}
-                      
-                      {/* Agent执行轨迹展示 */}
+
+                      {/* 执行轨迹展示 */}
                       {message.role === 'assistant' && message.mode === 'agent' && showExecutionTrace[message.id] && message.execution_trace && (
-                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border">
-                          <div className="flex items-center gap-2 mb-3">
-                            <Eye className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-sm font-medium text-muted-foreground">执行轨迹</span>
+                        <div className="mt-3 rounded-xl border bg-muted/20 backdrop-blur-sm overflow-hidden">
+                          <div className="px-3 py-2 border-b bg-muted/20 flex items-center gap-2">
+                            <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span className="text-xs font-medium text-foreground">執行軌跡</span>
+                            <span className="ml-auto text-[10px] text-muted-foreground">{message.execution_trace.length}</span>
                           </div>
-                          <div className="space-y-2">
-                            {message.execution_trace.map((trace, index) => (
-                              <div key={index} className="flex gap-3 p-2 bg-background rounded border-l-2 border-muted">
-                                <div className="shrink-0 mt-1">
-                                  {trace.status === 'planning' && <Loader className="w-4 h-4 text-yellow-500 animate-spin" />}
-                                  {trace.status === 'executing' && <Zap className="w-4 h-4 text-blue-500" />}
-                                  {trace.status === 'completed' && <CheckCircle className="w-4 h-4 text-green-500" />}
-                                  {trace.status === 'failed' && <XCircle className="w-4 h-4 text-red-500" />}
-                                </div>
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className="text-xs font-medium text-muted-foreground">
-                                      步骤 {trace.step}
-                                    </span>
-                                    <span className="text-xs capitalize px-2 py-0.5 rounded-full">
-                                      {trace.status === 'planning' && (
-                                        <span className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300">规划中</span>
-                                      )}
-                                      {trace.status === 'executing' && (
-                                        <span className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">执行中</span>
-                                      )}
-                                      {trace.status === 'completed' && (
-                                        <span className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">已完成</span>
-                                      )}
-                                      {trace.status === 'failed' && (
-                                        <span className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">失败</span>
-                                      )}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">
-                                      {new Date(trace.timestamp).toLocaleTimeString()}
-                                    </span>
-                                  </div>                                  
-                                  <div className="text-sm text-foreground">
-                                    {trace.action}
-                                  </div>
-                                  {trace.details && Object.keys(trace.details).length > 0 && (
-                                    <div className="text-xs text-muted-foreground mt-1 p-2 bg-muted/30 rounded">
-                                      <pre className="whitespace-pre-wrap">{JSON.stringify(trace.details, null, 2)}</pre>
+                          <div className="max-h-72 overflow-y-auto p-2 space-y-1">
+                            {message.execution_trace.map((trace, idx) => (
+                              <details
+                                key={idx}
+                                className="group rounded-lg border border-transparent hover:bg-muted/30 open:bg-background/50 open:border-border/60"
+                              >
+                                <summary className="cursor-pointer select-none px-2 py-1.5 flex items-center gap-2 text-xs [&::-webkit-details-marker]:hidden">
+                                  <span className="text-[10px] text-muted-foreground font-mono w-10 shrink-0">#{trace.step}</span>
+                                  <span
+                                    className={cn(
+                                      "shrink-0 px-1.5 py-0.5 rounded-md text-[10px]",
+                                      trace.status === 'completed' && "bg-green-500/10 text-green-700 dark:text-green-300",
+                                      trace.status === 'executing' && "bg-blue-500/10 text-blue-700 dark:text-blue-300",
+                                      trace.status === 'planning' && "bg-amber-500/10 text-amber-800 dark:text-amber-300",
+                                      trace.status === 'failed' && "bg-red-500/10 text-red-700 dark:text-red-300"
+                                    )}
+                                  >
+                                    {trace.status}
+                                  </span>
+                                  <span className="flex-1 min-w-0 text-muted-foreground truncate">{trace.action}</span>
+                                  <span className="text-[10px] text-muted-foreground shrink-0">
+                                    {new Date(trace.timestamp).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </summary>
+                                {(trace.details !== undefined && trace.details !== null) && (
+                                  <div className="px-2 pb-2">
+                                    <div className="rounded-lg border bg-background/50 p-2 text-xs">
+                                      <pre className="text-[11px] font-mono text-muted-foreground whitespace-pre-wrap wrap-break-word max-h-56 overflow-auto">
+                                        {typeof trace.details === 'string' ? trace.details : JSON.stringify(trace.details, null, 2)}
+                                      </pre>
                                     </div>
+                                  </div>
+                                )}
+                              </details>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 工具详情展示 */}
+                      {message.role === 'assistant' && message.mode === 'agent' && showToolDetails[message.id] && message.tools_used && (
+                        <div className="mt-3 rounded-xl border bg-muted/20 backdrop-blur-sm overflow-hidden">
+                          <div className="px-3 py-2 border-b bg-muted/20 flex items-center gap-2">
+                            <Wrench className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span className="text-xs font-medium text-foreground">工具詳情</span>
+                            <span className="ml-auto text-[10px] text-muted-foreground">{message.tools_used.length}</span>
+                          </div>
+                          <div className="max-h-72 overflow-y-auto p-2 space-y-1">
+                            {message.tools_used.map((tool, idx) => (
+                              <details
+                                key={idx}
+                                className="group rounded-lg border border-transparent hover:bg-muted/30 open:bg-background/50 open:border-border/60"
+                              >
+                                <summary className="cursor-pointer select-none px-2 py-1.5 flex items-center gap-2 text-xs [&::-webkit-details-marker]:hidden">
+                                  <div className="w-6 h-6 rounded-md bg-muted/40 border border-border/50 flex items-center justify-center shrink-0">
+                                    {tool.name === 'search' && <Search className="w-3.5 h-3.5 text-emerald-500" />}
+                                    {tool.name === 'generateImage' && <Image className="w-3.5 h-3.5 text-violet-500" />}
+                                    {tool.name !== 'search' && tool.name !== 'generateImage' && <FileText className="w-3.5 h-3.5 text-blue-500" />}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-xs font-mono text-foreground truncate">{tool.name}</div>
+                                    {tool.result && (
+                                      <div className="text-[10px] text-muted-foreground truncate">{tool.result}</div>
+                                    )}
+                                  </div>
+                                  {tool.duration && (
+                                    <span className="text-[10px] text-muted-foreground font-mono shrink-0">{tool.duration}ms</span>
                                   )}
-                                </div>
-                              </div>
+                                </summary>
+                                {tool.result && (
+                                  <div className="px-2 pb-2">
+                                    <div className="rounded-lg border bg-background/50 p-2">
+                                      <pre className="text-[11px] font-mono text-muted-foreground whitespace-pre-wrap wrap-break-word max-h-56 overflow-auto">
+                                        {tool.result}
+                                      </pre>
+                                    </div>
+                                  </div>
+                                )}
+                              </details>
                             ))}
                           </div>
                         </div>
@@ -1125,16 +1187,10 @@ export function MainChatArea({
                               <span className="text-muted-foreground">工具调用:</span>
                               <span className="ml-2 font-mono">{message.tools_used?.length || 0}</span>
                             </div>
-                            {message.reasoning_steps && (
+                            {message.react_steps && (
                               <div>
-                                <span className="text-muted-foreground">推理步骤:</span>
-                                <span className="ml-2 font-mono">{message.reasoning_steps.length}</span>
-                              </div>
-                            )}
-                            {message.execution_trace && (
-                              <div>
-                                <span className="text-muted-foreground">执行轨迹:</span>
-                                <span className="ml-2 font-mono">{message.execution_trace.length}</span>
+                                <span className="text-muted-foreground">总步骤:</span>
+                                <span className="ml-2 font-mono">{message.react_steps.length}</span>
                               </div>
                             )}
                           </div>
@@ -1297,149 +1353,12 @@ export function MainChatArea({
                                       agentStatus?.[currentChatId || ''] ||
                                       (Object.keys(agentStatus || {}).length > 0 ? Object.values(agentStatus || {})[0] : null)
                         
-                        const currentStep = status?.currentStep || '正在思考...'
-                        const totalSteps = status?.totalSteps || 0
                         const reactSteps = status?.reactSteps || []
-                        const toolsInUse = status?.toolsInUse || []
                         
                         return (
-                          <div className="space-y-3">
-                            {/* Current step text with animation */}
-                            <motion.div 
-                              key={currentStep}
-                              initial={{ opacity: 0, x: -5 }}
-                              animate={{ opacity: 1, x: 0 }}
-                              className="text-sm text-foreground"
-                            >
-                              {currentStep}
-                            </motion.div>
-                            
-                            {/* Tools used - Enhanced display */}
-                            {toolsInUse.length > 0 && (
-                              <motion.div 
-                                initial={{ opacity: 0, height: 0 }}
-                                animate={{ opacity: 1, height: 'auto' }}
-                                className="p-2.5 bg-muted/30 rounded-lg border"
-                              >
-                                <div className="flex items-center justify-between mb-2">
-                                  <div className="flex items-center gap-2">
-                                    <Wrench className="w-4 h-4 text-muted-foreground" />
-                                    <span className="text-sm font-medium text-muted-foreground">工具調用</span>
-                                  </div>
-                                  <span className="text-xs text-muted-foreground">{toolsInUse.length} 個工具</span>
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {toolsInUse.map((tool, index) => (
-                                    <motion.div 
-                                      key={`${tool}-${index}`}
-                                      initial={{ scale: 0.8, opacity: 0 }}
-                                      animate={{ scale: 1, opacity: 1 }}
-                                      transition={{ delay: index * 0.05 }}
-                                      className="flex items-center gap-1.5 px-2 py-1 bg-background rounded-md text-xs border shadow-sm"
-                                    >
-                                      {tool.includes('search') || tool.includes('Search') ? (
-                                        <Search className="w-3 h-3 text-blue-500" />
-                                      ) : tool.includes('image') || tool.includes('Image') ? (
-                                        <Image className="w-3 h-3 text-purple-500" />
-                                      ) : tool.includes('file') || tool.includes('File') || tool.includes('read') || tool.includes('Read') ? (
-                                        <FileText className="w-3 h-3 text-orange-500" />
-                                      ) : tool.includes('code') || tool.includes('Code') ? (
-                                        <Code className="w-3 h-3 text-green-500" />
-                                      ) : (
-                                        <Wrench className="w-3 h-3 text-muted-foreground" />
-                                      )}
-                                      <span className="font-medium">{tool}</span>
-                                    </motion.div>
-                                  ))}
-                                </div>
-                              </motion.div>
-                            )}
-                            
-                            {/* Steps timeline - Enhanced version */}
+                          <div className="space-y-3 mt-2">
                             {reactSteps.length > 0 && (
-                              <div className="space-y-1">
-                                {reactSteps.slice(-5).map((step, index) => {
-                                  const isLatest = index === Math.min(reactSteps.length, 5) - 1
-                                  const hasToolResult = step.toolResult && step.type === 'observation'
-                                  return (
-                                    <motion.div 
-                                      key={`${step.type}-${index}`}
-                                      initial={{ opacity: 0, x: -10 }}
-                                      animate={{ opacity: 1, x: 0 }}
-                                      transition={{ delay: index * 0.03 }}
-                                      className="space-y-1"
-                                    >
-                                      <div className={cn(
-                                        "flex items-center gap-2 text-xs py-1.5 px-2 rounded-md transition-colors",
-                                        isLatest ? "bg-muted/50" : "hover:bg-muted/30"
-                                      )}>
-                                        <div className={cn(
-                                          "w-5 h-5 rounded-full flex items-center justify-center shrink-0",
-                                          step.type === 'thought' && "bg-blue-100 dark:bg-blue-900/30",
-                                          step.type === 'action' && "bg-green-100 dark:bg-green-900/30",
-                                          step.type === 'observation' && "bg-purple-100 dark:bg-purple-900/30",
-                                          step.type === 'reflection' && "bg-amber-100 dark:bg-amber-900/30"
-                                        )}>
-                                          {step.type === 'thought' && <Brain className="w-2.5 h-2.5 text-blue-600 dark:text-blue-400" />}
-                                          {step.type === 'action' && <Zap className="w-2.5 h-2.5 text-green-600 dark:text-green-400" />}
-                                          {step.type === 'observation' && <Eye className="w-2.5 h-2.5 text-purple-600 dark:text-purple-400" />}
-                                          {step.type === 'reflection' && <Lightbulb className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400" />}
-                                        </div>
-                                        <span className={cn(
-                                          "flex-1 truncate",
-                                          isLatest ? "text-foreground font-medium" : "text-muted-foreground"
-                                        )}>
-                                          {step.label}
-                                        </span>
-                                        {step.toolName && (
-                                          <span className="text-muted-foreground text-[10px] px-1.5 py-0.5 bg-muted rounded">
-                                            {step.toolName}
-                                          </span>
-                                        )}
-                                        {step.complete && (
-                                          <motion.div
-                                            initial={{ scale: 0 }}
-                                            animate={{ scale: 1 }}
-                                          >
-                                            <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
-                                          </motion.div>
-                                        )}
-                                      </div>
-                                      {/* Tool result preview for observation steps */}
-                                      {hasToolResult && isLatest && (
-                                        <motion.div
-                                          initial={{ opacity: 0, height: 0 }}
-                                          animate={{ opacity: 1, height: 'auto' }}
-                                          className="ml-7 px-2 py-1.5 bg-muted/30 rounded border-l-2 border-purple-400 text-[11px] text-muted-foreground"
-                                        >
-                                          <div className="line-clamp-2 wrap-break-word">
-                                            {typeof step.toolResult === 'string' 
-                                              ? step.toolResult.slice(0, 150) + (step.toolResult.length > 150 ? '...' : '')
-                                              : JSON.stringify(step.toolResult).slice(0, 150) + '...'
-                                            }
-                                          </div>
-                                        </motion.div>
-                                      )}
-                                    </motion.div>
-                                  )
-                                })}
-                              </div>
-                            )}
-                            
-                            {/* Progress info - Enhanced */}
-                            {totalSteps > 0 && (
-                              <div className="flex items-center gap-2 text-xs">
-                                <div className="flex items-center gap-1 px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full">
-                                  <Zap className="w-3 h-3" />
-                                  <span>{totalSteps} 步驟</span>
-                                </div>
-                                {toolsInUse.length > 0 && (
-                                  <div className="flex items-center gap-1 px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 rounded-full">
-                                    <Wrench className="w-3 h-3" />
-                                    <span>{toolsInUse.length} 工具</span>
-                                  </div>
-                                )}
-                              </div>
+                              <AgentSteps steps={reactSteps} isRunning={true} />
                             )}
                           </div>
                         )
